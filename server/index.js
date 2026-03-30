@@ -87,7 +87,7 @@ app.post('/api/assets', (req, res) => {
 // --- Serve static files ---
 if (existsSync(STATIC_DIR)) {
   app.use(express.static(STATIC_DIR));
-  app.get('*', (_, res) => res.sendFile(join(STATIC_DIR, 'index.html')));
+  app.use((req, res, next) => { if (req.method === 'GET' && !req.path.startsWith('/api')) res.sendFile(join(STATIC_DIR, 'index.html')); else next(); });
 }
 
 app.listen(PORT, '0.0.0.0', () => {

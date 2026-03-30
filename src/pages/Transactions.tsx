@@ -6,7 +6,7 @@ import type { Transaction } from '../types';
 
 const inputStyle: React.CSSProperties = {
   padding: '0.5rem 0.75rem',
-  fontSize: '0.85rem',
+  fontSize: '0.875rem',
   width: '100%',
 };
 
@@ -17,6 +17,7 @@ export default function Transactions() {
   const [filterStart, setFilterStart] = useState('');
   const [filterEnd, setFilterEnd] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [, forceUpdate] = useState(0);
 
   const transactions = storage.getTransactions();
@@ -49,14 +50,14 @@ export default function Transactions() {
       .sort((a, b) => (a.date > b.date ? -1 : 1));
   }, [transactions, search, filterAccount, filterCategory, filterStart, filterEnd]);
 
+  const hasActiveFilters = filterAccount || filterCategory || filterStart || filterEnd || search;
+
   function handleCategoryChange(tx: Transaction, newCategory: string) {
-    // Update transaction
     const allTxs = storage.getTransactions().map(t =>
       t.id === tx.id ? { ...t, category: newCategory } : t,
     );
     storage.setTransactions(allTxs);
 
-    // Add custom rule based on name
     if (tx.name) {
       const existing = storage.getRules();
       const pattern = tx.name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -75,75 +76,134 @@ export default function Transactions() {
 
   const accountName = (iban: string) => accounts.find(a => a.iban === iban)?.name ?? iban;
 
+  const categoryBadge = (tx: Transaction) =>
+    editingId === tx.id ? (
+      <select
+        className="glass-input"
+        style={{ padding: '0.375rem 0.5rem', fontSize: '0.8rem', width: '100%' }}
+        defaultValue={tx.category}
+        autoFocus
+        onBlur={() => setEditingId(null)}
+        onChange={e => handleCategoryChange(tx, e.target.value)}
+      >
+        {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+      </select>
+    ) : (
+      <button
+        onClick={() => setEditingId(tx.id)}
+        style={{
+          background: 'rgba(139,92,246,0.12)',
+          border: '1px solid rgba(139,92,246,0.25)',
+          borderRadius: '1rem',
+          color: '#c4b5fd',
+          padding: '0.25rem 0.625rem',
+          fontSize: '0.75rem',
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+          minHeight: 32,
+          transition: 'background 0.15s',
+        }}
+        title="Klik om categorie aan te passen"
+      >
+        {tx.category}
+      </button>
+    );
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
       {/* Filters */}
       <div className="glass-card" style={{ padding: '1rem' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 180px 160px 160px', gap: '0.75rem', alignItems: 'end' }}>
-          <div>
-            <label style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.3rem' }}>Zoeken</label>
-            <input
-              className="glass-input"
-              style={inputStyle}
-              placeholder="Naam, omschrijving..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
+        {/* Header row: count + mobile toggle */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ color: '#64748b', fontSize: '0.8rem' }}>
+            {filtered.length} van {transactions.length} transacties
+            {hasActiveFilters && <span style={{ color: '#8b5cf6', marginLeft: '0.4rem' }}>• gefilterd</span>}
           </div>
-          <div>
-            <label style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.3rem' }}>Rekening</label>
-            <select
-              className="glass-input"
-              style={inputStyle}
-              value={filterAccount}
-              onChange={e => setFilterAccount(e.target.value)}
-            >
-              <option value="">Alle rekeningen</option>
-              {uniqueAccounts.map(iban => (
-                <option key={iban} value={iban}>{accountName(iban)}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.3rem' }}>Categorie</label>
-            <select
-              className="glass-input"
-              style={inputStyle}
-              value={filterCategory}
-              onChange={e => setFilterCategory(e.target.value)}
-            >
-              <option value="">Alle categorieën</option>
-              {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.3rem' }}>Van</label>
-            <input
-              type="date"
-              className="glass-input"
-              style={inputStyle}
-              value={filterStart}
-              onChange={e => setFilterStart(e.target.value)}
-            />
-          </div>
-          <div>
-            <label style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.3rem' }}>Tot</label>
-            <input
-              type="date"
-              className="glass-input"
-              style={inputStyle}
-              value={filterEnd}
-              onChange={e => setFilterEnd(e.target.value)}
-            />
-          </div>
+          {/* Shown only on mobile via CSS */}
+          <button
+            onClick={() => setFiltersOpen(v => !v)}
+            className="filter-toggle-btn"
+            style={{
+              background: hasActiveFilters ? 'rgba(139,92,246,0.15)' : 'rgba(255,255,255,0.06)',
+              border: `1px solid ${hasActiveFilters ? 'rgba(139,92,246,0.3)' : 'rgba(255,255,255,0.1)'}`,
+              borderRadius: '0.5rem',
+              color: hasActiveFilters ? '#c4b5fd' : '#94a3b8',
+              padding: '0.375rem 0.75rem',
+              fontSize: '0.8rem',
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              minHeight: 44,
+            }}
+          >
+            {filtersOpen ? '✕ Sluiten' : `⚙ Filters${hasActiveFilters ? ' ●' : ''}`}
+          </button>
         </div>
-        <div style={{ marginTop: '0.5rem', color: '#64748b', fontSize: '0.78rem' }}>
-          {filtered.length} van {transactions.length} transacties
+
+        {/* Filter grid — always visible on desktop, collapsible on mobile */}
+        <div className={`filter-grid-wrapper${filtersOpen ? ' filter-open' : ''}`} style={{ marginTop: '0.75rem' }}>
+          <div className="filter-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 180px 180px 160px 160px', gap: '0.75rem', alignItems: 'end' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.3rem' }}>Zoeken</label>
+              <input
+                className="glass-input"
+                style={inputStyle}
+                placeholder="Naam, omschrijving..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.3rem' }}>Rekening</label>
+              <select
+                className="glass-input"
+                style={inputStyle}
+                value={filterAccount}
+                onChange={e => setFilterAccount(e.target.value)}
+              >
+                <option value="">Alle rekeningen</option>
+                {uniqueAccounts.map(iban => (
+                  <option key={iban} value={iban}>{accountName(iban)}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.3rem' }}>Categorie</label>
+              <select
+                className="glass-input"
+                style={inputStyle}
+                value={filterCategory}
+                onChange={e => setFilterCategory(e.target.value)}
+              >
+                <option value="">Alle categorieën</option>
+                {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.3rem' }}>Van</label>
+              <input
+                type="date"
+                className="glass-input"
+                style={inputStyle}
+                value={filterStart}
+                onChange={e => setFilterStart(e.target.value)}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.3rem' }}>Tot</label>
+              <input
+                type="date"
+                className="glass-input"
+                style={inputStyle}
+                value={filterEnd}
+                onChange={e => setFilterEnd(e.target.value)}
+              />
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Table */}
-      <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>
+      {/* Desktop table */}
+      <div className="glass-card tx-table-view" style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead>
@@ -211,36 +271,7 @@ export default function Transactions() {
                       {tx.amount >= 0 ? '+' : ''}{formatCurrency(tx.amount)}
                     </td>
                     <td style={{ padding: '0.625rem 1rem' }}>
-                      {editingId === tx.id ? (
-                        <select
-                          className="glass-input"
-                          style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}
-                          defaultValue={tx.category}
-                          autoFocus
-                          onBlur={() => setEditingId(null)}
-                          onChange={e => handleCategoryChange(tx, e.target.value)}
-                        >
-                          {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
-                      ) : (
-                        <button
-                          onClick={() => setEditingId(tx.id)}
-                          style={{
-                            background: 'rgba(139,92,246,0.12)',
-                            border: '1px solid rgba(139,92,246,0.25)',
-                            borderRadius: '1rem',
-                            color: '#c4b5fd',
-                            padding: '0.2rem 0.6rem',
-                            fontSize: '0.75rem',
-                            cursor: 'pointer',
-                            fontFamily: 'inherit',
-                            transition: 'background 0.15s',
-                          }}
-                          title="Klik om categorie aan te passen"
-                        >
-                          {tx.category}
-                        </button>
-                      )}
+                      {categoryBadge(tx)}
                     </td>
                   </tr>
                 ))
@@ -248,6 +279,55 @@ export default function Transactions() {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* Mobile card list */}
+      <div className="tx-card-view">
+        {filtered.length === 0 ? (
+          <div className="glass-card" style={{ padding: '2rem', textAlign: 'center', color: '#64748b' }}>
+            Geen transacties gevonden
+          </div>
+        ) : (
+          filtered.map(tx => (
+            <div
+              key={tx.id}
+              className="glass-card"
+              style={{ padding: '0.875rem 1rem' }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
+                <div style={{ flex: 1, minWidth: 0, marginRight: '0.75rem' }}>
+                  <div style={{ fontWeight: 600, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {tx.name || tx.counterparty}
+                  </div>
+                  {tx.description && tx.description !== (tx.name || tx.counterparty) && (
+                    <div style={{ fontSize: '0.78rem', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '0.15rem' }}>
+                      {tx.description}
+                    </div>
+                  )}
+                </div>
+                <div
+                  style={{
+                    fontWeight: 700,
+                    fontSize: '1rem',
+                    color: tx.amount >= 0 ? '#10b981' : '#ef4444',
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                  }}
+                >
+                  {tx.amount >= 0 ? '+' : ''}{formatCurrency(tx.amount)}
+                </div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.75rem', color: '#64748b' }}>
+                  <span>{formatDate(tx.date)}</span>
+                  <span>·</span>
+                  <span>{accountName(tx.account)}</span>
+                </div>
+                <div>{categoryBadge(tx)}</div>
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );

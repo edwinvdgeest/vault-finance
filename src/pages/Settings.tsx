@@ -174,7 +174,7 @@ export default function Settings() {
         {/* Holdings list */}
         {cryptoHoldings.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '3.5rem 1fr 1fr 1fr 2rem', gap: '0.5rem', alignItems: 'center', padding: '0 0.25rem', marginBottom: '0.25rem' }}>
+            <div className="crypto-holding-header" style={{ display: 'grid', gridTemplateColumns: '3.5rem 1fr 1fr 1fr 2rem', gap: '0.5rem', alignItems: 'center', padding: '0 0.25rem', marginBottom: '0.25rem' }}>
               <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600 }}>Coin</span>
               <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600 }}>Naam</span>
               <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600 }}>Aantal</span>
@@ -182,7 +182,7 @@ export default function Settings() {
               <span />
             </div>
             {cryptoHoldings.map((h, idx) => (
-              <div key={h.type} style={{ display: 'grid', gridTemplateColumns: '3.5rem 1fr 1fr 1fr 2rem', gap: '0.5rem', alignItems: 'center' }}>
+              <div key={h.type} className="crypto-holding-row" style={{ display: 'grid', gridTemplateColumns: '3.5rem 1fr 1fr 1fr 2rem', gap: '0.5rem', alignItems: 'center' }}>
                 <span style={{
                   fontSize: '0.7rem',
                   fontWeight: 700,
@@ -191,14 +191,39 @@ export default function Settings() {
                   padding: '0.2rem 0.35rem',
                   borderRadius: '0.25rem',
                   textAlign: 'center',
+                  alignSelf: 'center',
                 }}>
                   {h.symbol}
                 </span>
-                <span style={{ fontSize: '0.8rem', color: '#cbd5e1' }}>{h.name}</span>
+                <div>
+                  <span className="crypto-name-label" style={{ fontSize: '0.8rem', color: '#cbd5e1' }}>{h.name}</span>
+                  {/* Mobile: inputs stacked under name */}
+                  <div className="crypto-inputs-mobile" style={{ display: 'none', gap: '0.5rem', marginTop: '0.4rem' }}>
+                    <input
+                      type="number"
+                      step="any"
+                      className="glass-input"
+                      style={{ ...inputStyle, padding: '0.375rem 0.5rem', fontSize: '0.875rem', flex: 1 }}
+                      placeholder="Aantal"
+                      value={h.amount}
+                      onChange={e => updateHolding(idx, 'amount', e.target.value)}
+                    />
+                    <input
+                      type="number"
+                      step="any"
+                      className="glass-input"
+                      style={{ ...inputStyle, padding: '0.375rem 0.5rem', fontSize: '0.875rem', flex: 1 }}
+                      placeholder="Aankoopprijs €"
+                      value={h.purchasePrice}
+                      onChange={e => updateHolding(idx, 'purchasePrice', e.target.value)}
+                    />
+                  </div>
+                </div>
+                {/* Desktop: separate input columns */}
                 <input
                   type="number"
                   step="any"
-                  className="glass-input"
+                  className="glass-input crypto-input-desktop"
                   style={{ ...inputStyle, padding: '0.375rem 0.5rem', fontSize: '0.8rem' }}
                   placeholder="0"
                   value={h.amount}
@@ -207,7 +232,7 @@ export default function Settings() {
                 <input
                   type="number"
                   step="any"
-                  className="glass-input"
+                  className="glass-input crypto-input-desktop"
                   style={{ ...inputStyle, padding: '0.375rem 0.5rem', fontSize: '0.8rem' }}
                   placeholder="optioneel"
                   value={h.purchasePrice}
@@ -215,7 +240,7 @@ export default function Settings() {
                 />
                 <button
                   onClick={() => removeHolding(idx)}
-                  style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1rem', padding: '0.25rem', lineHeight: 1, transition: 'color 0.15s' }}
+                  style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1.25rem', padding: '0.25rem', lineHeight: 1, minHeight: 44, minWidth: 44, transition: 'color 0.15s' }}
                   title="Verwijder"
                   onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
                   onMouseLeave={e => (e.currentTarget.style.color = '#64748b')}
@@ -273,7 +298,7 @@ export default function Settings() {
         <p style={sectionTitle}>Categorieregels</p>
 
         {/* Add rule */}
-        <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem' }}>
+        <div className="add-rule-form" style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem' }}>
           <input
             className="glass-input"
             style={{ ...inputStyle, flex: 1 }}
@@ -284,7 +309,7 @@ export default function Settings() {
           />
           <select
             className="glass-input"
-            style={{ ...inputStyle, width: 160 }}
+            style={{ ...inputStyle, minWidth: 140 }}
             value={newCategory}
             onChange={e => setNewCategory(e.target.value)}
           >
@@ -292,7 +317,7 @@ export default function Settings() {
           </select>
           <button
             className="glass-button"
-            style={{ fontFamily: 'inherit', padding: '0.5rem 1rem', fontSize: '0.875rem', fontWeight: 600, whiteSpace: 'nowrap', background: 'rgba(139,92,246,0.2)', borderColor: 'rgba(139,92,246,0.4)', color: 'white' }}
+            style={{ fontFamily: 'inherit', padding: '0.5rem 1rem', fontSize: '0.875rem', fontWeight: 600, whiteSpace: 'nowrap', background: 'rgba(139,92,246,0.2)', borderColor: 'rgba(139,92,246,0.4)', color: 'white', minHeight: 44 }}
             onClick={addRule}
           >
             + Toevoegen

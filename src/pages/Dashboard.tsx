@@ -155,7 +155,7 @@ export default function Dashboard() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
           <div>
             <SectionTitle>Netto vermogen</SectionTitle>
-            <div style={{ fontSize: '2.5rem', fontWeight: 700, letterSpacing: '-0.02em', lineHeight: 1.1 }}>
+            <div className="net-worth-amount" style={{ fontSize: '2.5rem', fontWeight: 700, letterSpacing: '-0.02em', lineHeight: 1.1 }}>
               <span className="accent-gradient-text">{formatCurrency(currentNetWorth)}</span>
             </div>
             <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
@@ -291,7 +291,7 @@ export default function Dashboard() {
       )}
 
       {/* Charts row 1: Net worth trend + Account breakdown */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '1.25rem' }}>
+      <div className="grid-main">
         <GlassCard>
           <SectionTitle>Vermogensontwikkeling (12 maanden)</SectionTitle>
           <ResponsiveContainer width="100%" height={220}>
@@ -369,7 +369,7 @@ export default function Dashboard() {
       </div>
 
       {/* Charts row 2: Income/Expense + Category spending */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+      <div className="grid-halves">
         <GlassCard>
           <SectionTitle>Inkomsten vs. Uitgaven</SectionTitle>
           {incomeExpenseData.length > 0 ? (
@@ -406,7 +406,7 @@ export default function Dashboard() {
         <GlassCard>
           <SectionTitle>Uitgaven per categorie</SectionTitle>
           {categoryData.length > 0 ? (
-            <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+            <div className="category-chart-inner" style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
               <div style={{ flex: '0 0 160px' }}>
                 <ResponsiveContainer width={160} height={160}>
                   <PieChart>

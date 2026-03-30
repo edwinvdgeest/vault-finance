@@ -94,7 +94,7 @@ export default function Import() {
         <p style={{ fontSize: '0.75rem', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '1rem' }}>
           Bank & Instellingen
         </p>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+        <div className="grid-halves" style={{ gap: '1rem' }}>
           <div>
             <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.4rem' }}>Bank</label>
             <select
@@ -142,7 +142,12 @@ export default function Import() {
           border: dragging ? '2px dashed rgba(139,92,246,0.6)' : '2px dashed rgba(255,255,255,0.1)',
           cursor: 'pointer',
           textAlign: 'center',
-          padding: '2.5rem',
+          padding: '2.5rem 1.5rem',
+          minHeight: '10rem',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
           transition: 'border-color 0.2s',
           background: dragging ? 'rgba(139,92,246,0.05)' : undefined,
         }}

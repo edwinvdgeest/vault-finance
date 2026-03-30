@@ -3,7 +3,7 @@ import { storage } from '../lib/storage';
 import { getDefaultRulesWithIds, categorize } from '../lib/categorizer';
 import { formatCurrency } from '../lib/utils';
 import { CATEGORIES } from '../types';
-import type { Asset, Rule } from '../types';
+import type { Asset, Rule, Account } from '../types';
 
 const KNOWN_COINS: { type: string; symbol: string; name: string }[] = [
   { type: 'bitcoin', symbol: 'BTC', name: 'Bitcoin' },
@@ -32,7 +32,22 @@ function assetToEdit(a: Asset): CryptoEdit {
   };
 }
 
+interface AccountEdit {
+  name: string;
+  startingBalance: string;
+}
+
+const BANK_LABELS: Record<string, string> = {
+  bunq: 'bunq',
+  triodos: 'Triodos',
+  abn: 'ABN AMRO',
+};
+
 export default function Settings() {
+  const [accounts, setAccounts] = useState<Account[]>(() => storage.getAccounts());
+  const [accountEdits, setAccountEdits] = useState<Record<string, AccountEdit>>({});
+  const [editingField, setEditingField] = useState<{ id: string; field: 'name' | 'balance' } | null>(null);
+
   const [rules, setRules] = useState<Rule[]>(() => {
     const stored = storage.getRules();
     return stored.length > 0 ? stored : getDefaultRulesWithIds();
@@ -51,6 +66,34 @@ export default function Settings() {
   function showSaved(msg: string) {
     setSaved(msg);
     setTimeout(() => setSaved(''), 2000);
+  }
+
+  function startEdit(id: string, field: 'name' | 'balance') {
+    const acc = accounts.find(a => a.id === id);
+    if (!acc) return;
+    setAccountEdits(prev => {
+      if (prev[id]) return prev;
+      return { ...prev, [id]: { name: acc.name, startingBalance: String(acc.startingBalance) } };
+    });
+    setEditingField({ id, field });
+  }
+
+  function commitAccountEdit(id: string) {
+    const acc = accounts.find(a => a.id === id);
+    if (!acc) return;
+    const edit = accountEdits[id];
+    if (!edit) { setEditingField(null); return; }
+    const newName = edit.name.trim() || acc.name;
+    const newBalance = parseFloat(edit.startingBalance);
+    const updated: Account = {
+      ...acc,
+      name: newName,
+      startingBalance: isNaN(newBalance) ? acc.startingBalance : newBalance,
+    };
+    storage.upsertAccount(updated);
+    setAccounts(storage.getAccounts());
+    setEditingField(null);
+    showSaved('Rekening opgeslagen');
   }
 
   function saveRules(updated: Rule[]) {
@@ -179,6 +222,104 @@ export default function Settings() {
       {saved && (
         <div style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: '0.5rem', padding: '0.625rem 1rem', color: '#6ee7b7', fontSize: '0.875rem' }}>
           ✓ {saved}
+        </div>
+      )}
+
+      {/* Rekeningen */}
+      {accounts.length > 0 && (
+        <div className="glass-card">
+          <p style={sectionTitle}>Rekeningen</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            {accounts.map(acc => {
+              const edit = accountEdits[acc.id] ?? { name: acc.name, startingBalance: String(acc.startingBalance) };
+              const isEditingName = editingField?.id === acc.id && editingField.field === 'name';
+              const isEditingBalance = editingField?.id === acc.id && editingField.field === 'balance';
+              return (
+                <div
+                  key={acc.id}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr auto auto',
+                    gap: '0.75rem',
+                    alignItems: 'center',
+                    padding: '0.625rem 0.875rem',
+                    background: 'rgba(255,255,255,0.03)',
+                    border: '1px solid rgba(255,255,255,0.07)',
+                    borderRadius: '0.5rem',
+                  }}
+                >
+                  {/* Left: name + IBAN */}
+                  <div style={{ minWidth: 0 }}>
+                    {isEditingName ? (
+                      <input
+                        autoFocus
+                        className="glass-input"
+                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.875rem', width: '100%' }}
+                        value={edit.name}
+                        onChange={e => setAccountEdits(prev => ({ ...prev, [acc.id]: { ...edit, name: e.target.value } }))}
+                        onBlur={() => commitAccountEdit(acc.id)}
+                        onKeyDown={e => { if (e.key === 'Enter') commitAccountEdit(acc.id); if (e.key === 'Escape') setEditingField(null); }}
+                      />
+                    ) : (
+                      <div
+                        style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}
+                        onClick={() => startEdit(acc.id, 'name')}
+                        title="Klik om naam te wijzigen"
+                      >
+                        <span style={{ fontSize: '0.875rem', color: '#e2e8f0', fontWeight: 500 }}>{acc.name}</span>
+                        <span style={{ fontSize: '0.75rem', color: '#475569' }}>✎</span>
+                      </div>
+                    )}
+                    <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.15rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {acc.iban}
+                    </div>
+                  </div>
+
+                  {/* Bank badge */}
+                  <span style={{
+                    fontSize: '0.7rem',
+                    fontWeight: 600,
+                    color: '#7dd3fc',
+                    background: 'rgba(14,165,233,0.12)',
+                    padding: '0.2rem 0.5rem',
+                    borderRadius: '0.25rem',
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {BANK_LABELS[acc.bank] ?? acc.bank}
+                  </span>
+
+                  {/* Starting balance (editable) */}
+                  {isEditingBalance ? (
+                    <input
+                      autoFocus
+                      type="number"
+                      step="0.01"
+                      className="glass-input"
+                      style={{ padding: '0.25rem 0.5rem', fontSize: '0.875rem', width: '8rem', textAlign: 'right' }}
+                      value={edit.startingBalance}
+                      onChange={e => setAccountEdits(prev => ({ ...prev, [acc.id]: { ...edit, startingBalance: e.target.value } }))}
+                      onBlur={() => commitAccountEdit(acc.id)}
+                      onKeyDown={e => { if (e.key === 'Enter') commitAccountEdit(acc.id); if (e.key === 'Escape') setEditingField(null); }}
+                    />
+                  ) : (
+                    <div
+                      style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', justifyContent: 'flex-end' }}
+                      onClick={() => startEdit(acc.id, 'balance')}
+                      title="Klik om startsaldo te wijzigen"
+                    >
+                      <span style={{ fontSize: '0.875rem', color: acc.startingBalance < 0 ? '#f87171' : '#6ee7b7', fontWeight: 500, whiteSpace: 'nowrap' }}>
+                        {formatCurrency(acc.startingBalance)}
+                      </span>
+                      <span style={{ fontSize: '0.75rem', color: '#475569' }}>✎</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <p style={{ fontSize: '0.75rem', color: '#475569', marginTop: '0.75rem', marginBottom: 0 }}>
+            Klik op een naam of saldo om te bewerken. Druk Enter of klik buiten het veld om op te slaan.
+          </p>
         </div>
       )}
 

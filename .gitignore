@@ -26,3 +26,4 @@ dist-ssr
 # Data directory (persistent storage)
 data/
 
+.claude/

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { storage } from '../lib/storage';
-import { getDefaultRulesWithIds } from '../lib/categorizer';
+import { getDefaultRulesWithIds, categorize } from '../lib/categorizer';
 import { formatCurrency } from '../lib/utils';
 import { CATEGORIES } from '../types';
 import type { Asset, Rule } from '../types';
@@ -46,6 +46,7 @@ export default function Settings() {
   const [newCoinType, setNewCoinType] = useState(KNOWN_COINS[0].type);
 
   const [saved, setSaved] = useState('');
+  const [onlyOverig, setOnlyOverig] = useState(true);
 
   function showSaved(msg: string) {
     setSaved(msg);
@@ -59,6 +60,20 @@ export default function Settings() {
 
   function deleteRule(id: string) {
     saveRules(rules.filter(r => r.id !== id));
+  }
+
+  function recategorize() {
+    const transactions = storage.getTransactions();
+    const currentRules = storage.getRules().length > 0 ? storage.getRules() : getDefaultRulesWithIds();
+    const updated = transactions.map(tx => {
+      if (onlyOverig && tx.category !== 'Overig') return tx;
+      return { ...tx, category: categorize(tx.name, tx.description, currentRules) };
+    });
+    storage.setTransactions(updated);
+    const count = onlyOverig
+      ? transactions.filter(tx => tx.category === 'Overig').length
+      : updated.length;
+    showSaved(`${count} transacties opnieuw gecategoriseerd`);
   }
 
   function addRule() {
@@ -322,6 +337,26 @@ export default function Settings() {
           >
             + Toevoegen
           </button>
+        </div>
+
+        {/* Recategorize */}
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+          <button
+            className="glass-button"
+            style={{ fontFamily: 'inherit', padding: '0.5rem 1.25rem', fontSize: '0.875rem', fontWeight: 600, background: 'rgba(6,182,212,0.15)', borderColor: 'rgba(6,182,212,0.3)', color: 'white', whiteSpace: 'nowrap' }}
+            onClick={recategorize}
+          >
+            Herindelen
+          </button>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.875rem', color: '#94a3b8', userSelect: 'none' }}>
+            <input
+              type="checkbox"
+              checked={onlyOverig}
+              onChange={e => setOnlyOverig(e.target.checked)}
+              style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#06b6d4' }}
+            />
+            Alleen 'Overig' herindelen
+          </label>
         </div>
 
         {/* Rules list */}

@@ -23,6 +23,14 @@ export default function Transactions() {
   const transactions = storage.getTransactions();
   const accounts = storage.getAccounts();
 
+  const allCategories = useMemo(() => {
+    const fromRules = storage.getRules().map(r => r.category);
+    const fromTransactions = transactions.map(tx => tx.category);
+    return [...new Set([...CATEGORIES, ...fromTransactions, ...fromRules])]
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b, 'nl'));
+  }, [transactions.length]);
+
   const uniqueAccounts = useMemo(
     () => [...new Set(transactions.map(tx => tx.account))],
     [transactions.length],
@@ -86,7 +94,7 @@ export default function Transactions() {
         onBlur={() => setEditingId(null)}
         onChange={e => handleCategoryChange(tx, e.target.value)}
       >
-        {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+        {allCategories.map(c => <option key={c} value={c}>{c}</option>)}
       </select>
     ) : (
       <button
@@ -175,7 +183,7 @@ export default function Transactions() {
                 onChange={e => setFilterCategory(e.target.value)}
               >
                 <option value="">Alle categorieën</option>
-                {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                {allCategories.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
             <div>

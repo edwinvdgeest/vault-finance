@@ -52,6 +52,18 @@ export const CATEGORIES = [
   'Bank & Rente',
   'Overboekingen',
   'Inkomen',
+  'Verzekeringen',
+  'Zorg & Medisch',
+  'Internet & Telecom',
+  'Kinderopvang',
+  'Kleding & Mode',
+  'Vakantie & Reizen',
+  'Cadeaus & Shopping',
+  'Persoonlijke verzorging',
+  'Belastingen',
+  'Tuin & Huishouden',
+  'Donaties',
+  'Parkeren',
   'Overig',
 ] as const;
 

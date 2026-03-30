@@ -3,5 +3,8 @@ services:
     build: .
     container_name: vault-finance
     ports:
-      - "8088:80"
+      - '8088:3001'
+    volumes:
+      - ./data:/app/data
     restart: unless-stopped
+

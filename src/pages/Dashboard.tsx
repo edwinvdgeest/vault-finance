@@ -66,7 +66,7 @@ const tooltipStyle = {
 };
 
 export default function Dashboard() {
-  const [period, setPeriod] = useState<PeriodFilter>('this-month');
+  const [period, setPeriod] = useState<PeriodFilter>('year');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [btcPrice, setBtcPrice] = useState<number | null>(null);
@@ -246,7 +246,7 @@ export default function Dashboard() {
                     nameKey="name"
                   >
                     {accountData.map((_, i) => (
-                      <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                      <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} style={{ fill: PIE_COLORS[i % PIE_COLORS.length] }} />
                     ))}
                   </Pie>
                   <Tooltip contentStyle={tooltipStyle} formatter={(v) => formatCurrency(Number(v))} />
@@ -298,8 +298,8 @@ export default function Dashboard() {
                   formatter={name => name === 'income' ? 'Inkomsten' : 'Uitgaven'}
                   wrapperStyle={{ fontSize: 12, color: '#94a3b8' }}
                 />
-                <Bar dataKey="income" fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={40} />
-                <Bar dataKey="expenses" fill="#ef4444" radius={[3, 3, 0, 0]} maxBarSize={40} />
+                <Bar dataKey="income" fill="#8b5cf6" style={{ fill: '#8b5cf6' }} radius={[3, 3, 0, 0]} maxBarSize={40} />
+                <Bar dataKey="expenses" fill="#06b6d4" style={{ fill: '#06b6d4' }} radius={[3, 3, 0, 0]} maxBarSize={40} />
               </BarChart>
             </ResponsiveContainer>
           ) : (
@@ -324,7 +324,7 @@ export default function Dashboard() {
                       nameKey="category"
                     >
                       {categoryData.slice(0, 8).map((_, i) => (
-                        <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                        <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} style={{ fill: PIE_COLORS[i % PIE_COLORS.length] }} />
                       ))}
                     </Pie>
                     <Tooltip contentStyle={tooltipStyle} formatter={(v) => formatCurrency(Number(v))} />

@@ -10,6 +10,7 @@ export default function Import() {
   const [bank, setBank] = useState<BankType>('bunq');
   const [dragging, setDragging] = useState(false);
   const [preview, setPreview] = useState<Transaction[]>([]);
+  const [allParsed, setAllParsed] = useState<Transaction[]>([]);
   const [fileName, setFileName] = useState('');
   const [startingBalance, setStartingBalance] = useState('');
   const [accountName, setAccountName] = useState('');
@@ -21,6 +22,7 @@ export default function Import() {
     const rules = storage.getRules().length > 0 ? storage.getRules() : getDefaultRulesWithIds();
     try {
       const txs = bank === 'bunq' ? parseBunqCsv(text, rules) : parseTriodosCsv(text, rules);
+      setAllParsed(txs);
       setPreview(txs.slice(0, 50));
       setError('');
     } catch (e) {
@@ -49,9 +51,10 @@ export default function Import() {
     const text = (fileRef.current?.files?.[0]) ? undefined : null;
     if (!preview.length) return;
 
-    // Re-parse full file from stored content — use preview data
+    // Import all parsed transactions, not just the preview slice
     const existing = storage.getTransactions();
-    const deduped = deduplicate(preview, existing);
+    const source = allParsed.length > 0 ? allParsed : preview;
+    const deduped = deduplicate(source, existing);
 
     storage.addTransactions(deduped);
 
@@ -67,7 +70,7 @@ export default function Import() {
           iban,
           bank,
           startingBalance: parseFloat(startingBalance) || 0,
-          startingDate: preview[preview.length - 1]?.date ?? new Date().toISOString().slice(0, 10),
+          startingDate: source[source.length - 1]?.date ?? new Date().toISOString().slice(0, 10),
         });
       }
     }
@@ -77,7 +80,8 @@ export default function Import() {
       storage.setRules(getDefaultRulesWithIds());
     }
 
-    setImported({ count: deduped.length, dupes: preview.length - deduped.length });
+    setImported({ count: deduped.length, dupes: source.length - deduped.length });
+    setAllParsed([]);
     setPreview([]);
     setFileName('');
     void rules;
@@ -174,7 +178,7 @@ export default function Import() {
       {preview.length > 0 && (
         <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontWeight: 600 }}>Voorbeeld ({preview.length} transacties)</span>
+            <span style={{ fontWeight: 600 }}>Voorbeeld ({allParsed.length > 50 ? `${preview.length} van ${allParsed.length}` : preview.length} transacties)</span>
             <button
               className="glass-button"
               style={{ padding: '0.5rem 1.25rem', fontFamily: 'inherit', fontSize: '0.875rem', fontWeight: 600, background: 'rgba(139,92,246,0.2)', borderColor: 'rgba(139,92,246,0.4)', color: 'white' }}

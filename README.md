@@ -1,73 +1,62 @@
-# React + TypeScript + Vite
+# Vault Finance
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Persoonlijke financiële dashboard voor het analyseren van bankafschriften van bunq en Triodos.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Importeer CSV-exports van bunq en Triodos
+- Automatische categorisering van transacties
+- Dashboard met uitgaven per categorie
+- Maandelijkse trend-grafieken
+- Handmatig categorieën aanpassen
 
-## React Compiler
+## Lokale ontwikkeling
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Deployen op Synology NAS
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+### Vereisten
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+- Docker en Docker Compose geïnstalleerd op de NAS (via Package Center)
+- SSH-toegang tot de NAS
+
+### Stappen
+
+1. SSH in op je NAS:
+
+```bash
+ssh admin@<nas-ip>
+```
+
+2. Clone de repository:
+
+```bash
+git clone <repo-url> /volume1/docker/vault-finance
+cd /volume1/docker/vault-finance
+```
+
+3. Start de container:
+
+```bash
+docker-compose up -d
+```
+
+4. Open de app via `http://<nas-ip>:8088`
+
+### Updates
+
+```bash
+cd /volume1/docker/vault-finance
+git pull
+docker-compose up -d --build
+```
+
+### Stoppen
+
+```bash
+docker-compose down
 ```

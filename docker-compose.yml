@@ -1,0 +1,7 @@
+services:
+  vault-finance:
+    build: .
+    container_name: vault-finance
+    ports:
+      - "8088:80"
+    restart: unless-stopped

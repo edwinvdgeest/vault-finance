@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { parseBunqCsv } from '../lib/parsers/bunq';
 import { parseTriodosCsv } from '../lib/parsers/triodos';
+import { parseAbnTxt } from '../lib/parsers/abn';
 import { storage } from '../lib/storage';
 import { deduplicate, formatCurrency, formatDate } from '../lib/utils';
 import { getDefaultRulesWithIds } from '../lib/categorizer';
@@ -21,7 +22,11 @@ export default function Import() {
   function parseFile(text: string) {
     const rules = storage.getRules().length > 0 ? storage.getRules() : getDefaultRulesWithIds();
     try {
-      const txs = bank === 'bunq' ? parseBunqCsv(text, rules) : parseTriodosCsv(text, rules);
+      const txs = bank === 'bunq'
+        ? parseBunqCsv(text, rules)
+        : bank === 'triodos'
+        ? parseTriodosCsv(text, rules)
+        : parseAbnTxt(text, rules);
       setAllParsed(txs);
       setPreview(txs.slice(0, 50));
       setError('');
@@ -105,6 +110,7 @@ export default function Import() {
             >
               <option value="bunq">bunq</option>
               <option value="triodos">Triodos</option>
+              <option value="abn">ABN AMRO</option>
             </select>
           </div>
           <div>
@@ -155,16 +161,20 @@ export default function Import() {
         <input
           ref={fileRef}
           type="file"
-          accept=".csv"
+          accept=".csv,.txt"
           style={{ display: 'none' }}
           onChange={e => { if (e.target.files?.[0]) handleFile(e.target.files[0]); }}
         />
         <p style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📂</p>
         <p style={{ fontWeight: 500, marginBottom: '0.25rem' }}>
-          {fileName || 'Sleep CSV hier of klik om te selecteren'}
+          {fileName || 'Sleep bestand hier of klik om te selecteren'}
         </p>
         <p style={{ fontSize: '0.8rem', color: '#64748b' }}>
-          {bank === 'bunq' ? 'bunq CSV (puntkomma-gescheiden, met header)' : 'Triodos CSV (komma-gescheiden, geen header)'}
+          {bank === 'bunq'
+            ? 'bunq CSV (puntkomma-gescheiden, met header)'
+            : bank === 'triodos'
+            ? 'Triodos CSV (komma-gescheiden, geen header)'
+            : 'ABN AMRO TXT (tab-gescheiden, geen header)'}
         </p>
       </div>
 

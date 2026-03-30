@@ -15,7 +15,7 @@ export interface Account {
   id: string;
   name: string;
   iban: string;
-  bank: 'bunq' | 'triodos';
+  bank: 'bunq' | 'triodos' | 'abn';
   startingBalance: number;
   startingDate: string; // ISO YYYY-MM-DD
 }
@@ -38,7 +38,7 @@ export interface Asset {
   lastUpdated: string;
 }
 
-export type BankType = 'bunq' | 'triodos';
+export type BankType = 'bunq' | 'triodos' | 'abn';
 export type PeriodFilter = 'this-month' | 'last-month' | 'quarter' | 'year' | 'custom';
 
 export const CATEGORIES = [

@@ -28,9 +28,13 @@ export interface Rule {
 }
 
 export interface Asset {
-  type: 'bitcoin';
+  type: string; // CoinGecko ID (e.g., 'bitcoin', 'bitcoin-cash', 'ecash')
+  symbol: string; // ticker (e.g., 'BTC', 'BCH', 'XEC')
+  name: string; // display name
   amount: number;
-  lastPrice: number;
+  purchasePrice?: number; // optional EUR cost basis per unit
+  currentPrice: number; // EUR price per unit
+  lastPrice: number; // backward compat (same as currentPrice)
   lastUpdated: string;
 }
 

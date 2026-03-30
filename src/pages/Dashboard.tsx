@@ -26,7 +26,7 @@ import {
   filterByPeriod,
 } from '../lib/analytics';
 import { formatCurrency, getPeriodDates } from '../lib/utils';
-import type { PeriodFilter } from '../types';
+import type { Asset, PeriodFilter } from '../types';
 
 const PERIOD_OPTIONS: { value: PeriodFilter; label: string }[] = [
   { value: 'this-month', label: 'Deze maand' },
@@ -40,6 +40,9 @@ const PIE_COLORS = [
   '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444',
   '#ec4899', '#6366f1', '#14b8a6', '#f97316', '#84cc16',
 ];
+
+// All CoinGecko IDs to fetch prices for
+const COINGECKO_IDS = 'bitcoin,bitcoin-cash,bitcoin-cash-sv,ecash,apenft,tether';
 
 function GlassCard({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
@@ -65,49 +68,71 @@ const tooltipStyle = {
   fontSize: 13,
 };
 
+function assetSymbol(a: Asset): string {
+  return a.symbol || (a.type === 'bitcoin' ? 'BTC' : a.type.toUpperCase().replace(/-/g, ''));
+}
+
+function assetName(a: Asset): string {
+  return a.name || (a.type === 'bitcoin' ? 'Bitcoin' : a.type);
+}
+
+function assetPrice(a: Asset, prices: Record<string, number>): number {
+  return prices[a.type] ?? a.currentPrice ?? a.lastPrice ?? 0;
+}
+
+function computeTotalCryptoValue(assets: Asset[], prices: Record<string, number>): number {
+  return assets.reduce((sum, a) => sum + a.amount * assetPrice(a, prices), 0);
+}
+
 export default function Dashboard() {
   const [period, setPeriod] = useState<PeriodFilter>('year');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
-  const [btcPrice, setBtcPrice] = useState<number | null>(null);
+  const [cryptoPrices, setCryptoPrices] = useState<Record<string, number>>({});
 
   const transactions = storage.getTransactions();
   const accounts = storage.getAccounts();
   const assets = storage.getAssets();
-  const btcAsset = assets.find(a => a.type === 'bitcoin');
-  const btcAmount = btcAsset?.amount ?? 0;
-  const effectiveBtcPrice = btcPrice ?? btcAsset?.lastPrice ?? 0;
 
   const { start, end } = getPeriodDates(period, customStart, customEnd);
   const periodTxs = filterByPeriod(transactions, start, end);
 
-  const currentNetWorth = getNetWorth(accounts, transactions, effectiveBtcPrice, btcAmount);
-  const lastMonthNetWorth = getNetWorth(accounts, transactions, effectiveBtcPrice, btcAmount, getLastMonthEnd());
+  const totalCryptoValue = computeTotalCryptoValue(assets, cryptoPrices);
+  const currentNetWorth = getNetWorth(accounts, transactions, totalCryptoValue);
+  const lastMonthTotalCrypto = computeTotalCryptoValue(assets, cryptoPrices);
+  const lastMonthNetWorth = getNetWorth(accounts, transactions, lastMonthTotalCrypto, getLastMonthEnd());
   const netWorthDelta = currentNetWorth - lastMonthNetWorth;
   const netWorthDeltaPct = lastMonthNetWorth !== 0 ? (netWorthDelta / Math.abs(lastMonthNetWorth)) * 100 : 0;
 
-  const trendData = getMonthlyNetWorthTrend(accounts, transactions, effectiveBtcPrice, btcAmount);
+  const trendData = getMonthlyNetWorthTrend(accounts, transactions, totalCryptoValue);
   const incomeExpenseData = getMonthlyIncomeExpense(periodTxs, start, end);
   const categoryData = getCategorySpending(periodTxs);
   const accountData = getAccountBreakdown(accounts, transactions);
   const top5 = getTopExpenses(periodTxs);
 
   useEffect(() => {
-    fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=eur')
+    fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${COINGECKO_IDS}&vs_currencies=eur`)
       .then(r => r.json())
-      .then((data: { bitcoin: { eur: number } }) => {
-        setBtcPrice(data.bitcoin.eur);
-        if (btcAsset) {
-          const updated = assets.map(a =>
-            a.type === 'bitcoin' ? { ...a, lastPrice: data.bitcoin.eur, lastUpdated: new Date().toISOString() } : a,
-          );
+      .then((data: Record<string, { eur: number }>) => {
+        const priceMap: Record<string, number> = {};
+        for (const [id, val] of Object.entries(data)) {
+          priceMap[id] = val.eur;
+        }
+        setCryptoPrices(priceMap);
+        if (assets.length > 0) {
+          const now = new Date().toISOString();
+          const updated = assets.map(a => {
+            const price = priceMap[a.type];
+            if (price == null) return a;
+            return { ...a, currentPrice: price, lastPrice: price, lastUpdated: now };
+          });
           storage.setAssets(updated);
         }
       })
       .catch(() => {});
   }, []);
 
-  const isEmpty = accounts.length === 0 && transactions.length === 0;
+  const isEmpty = accounts.length === 0 && transactions.length === 0 && assets.length === 0;
 
   if (isEmpty) {
     return (
@@ -142,9 +167,9 @@ export default function Dashboard() {
               </span>
               <span style={{ color: '#64748b', fontSize: '0.8rem' }}>t.o.v. vorige maand</span>
             </div>
-            {btcAmount > 0 && (
+            {totalCryptoValue > 0 && (
               <div style={{ marginTop: '0.5rem', color: '#94a3b8', fontSize: '0.8rem' }}>
-                ₿ {btcAmount} × {effectiveBtcPrice > 0 ? formatCurrency(effectiveBtcPrice) : '—'} = {formatCurrency(btcAmount * effectiveBtcPrice)}
+                Crypto: <span style={{ color: '#f59e0b' }}>{formatCurrency(totalCryptoValue)}</span>
               </div>
             )}
           </div>
@@ -193,6 +218,77 @@ export default function Dashboard() {
           </div>
         )}
       </GlassCard>
+
+      {/* Crypto Portfolio */}
+      {assets.length > 0 && (
+        <GlassCard>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+            <SectionTitle>Crypto portfolio</SectionTitle>
+            <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#f59e0b' }}>
+              {formatCurrency(totalCryptoValue)}
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+            {assets.map(asset => {
+              const price = assetPrice(asset, cryptoPrices);
+              const value = asset.amount * price;
+              const sym = assetSymbol(asset);
+              const nm = assetName(asset);
+              return (
+                <div
+                  key={asset.type}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '3rem 1fr auto auto',
+                    gap: '0.75rem',
+                    alignItems: 'center',
+                    padding: '0.5rem 0.75rem',
+                    background: 'rgba(255,255,255,0.03)',
+                    borderRadius: '0.5rem',
+                    border: '1px solid rgba(255,255,255,0.06)',
+                  }}
+                >
+                  <span style={{
+                    fontSize: '0.7rem',
+                    fontWeight: 700,
+                    color: '#c4b5fd',
+                    background: 'rgba(139,92,246,0.15)',
+                    padding: '0.2rem 0.35rem',
+                    borderRadius: '0.25rem',
+                    textAlign: 'center',
+                    letterSpacing: '0.04em',
+                  }}>
+                    {sym}
+                  </span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.1rem' }}>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>{nm}</span>
+                    <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                      {asset.amount.toLocaleString('nl-NL', { maximumSignificantDigits: 8 })} × {price > 0 ? formatCurrency(price) : '—'}
+                    </span>
+                  </div>
+                  <span style={{
+                    fontSize: '0.85rem',
+                    fontWeight: 600,
+                    color: value > 0.01 ? '#10b981' : '#475569',
+                    textAlign: 'right',
+                  }}>
+                    {formatCurrency(value)}
+                  </span>
+                  {asset.purchasePrice != null && asset.purchasePrice > 0 && price > 0 && (
+                    <span style={{
+                      fontSize: '0.72rem',
+                      color: price >= asset.purchasePrice ? '#10b981' : '#ef4444',
+                      textAlign: 'right',
+                    }}>
+                      {price >= asset.purchasePrice ? '+' : ''}{(((price - asset.purchasePrice) / asset.purchasePrice) * 100).toFixed(1)}%
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </GlassCard>
+      )}
 
       {/* Charts row 1: Net worth trend + Account breakdown */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '1.25rem' }}>

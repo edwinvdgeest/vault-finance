@@ -13,31 +13,29 @@ export function getAccountBalance(account: Account, transactions: Transaction[],
 export function getNetWorth(
   accounts: Account[],
   transactions: Transaction[],
-  btcPrice: number,
-  btcAmount: number,
+  cryptoValue: number,
   asOf?: Date,
 ): number {
   const cash = accounts.reduce((sum, acc) => sum + getAccountBalance(acc, transactions, asOf), 0);
-  return cash + btcAmount * btcPrice;
+  return cash + cryptoValue;
 }
 
 export function getMonthlyNetWorthTrend(
   accounts: Account[],
   transactions: Transaction[],
-  btcPrice: number,
-  btcAmount: number,
+  cryptoValue: number,
 ): { month: string; label: string; netWorth: number }[] {
   if (accounts.length === 0 && transactions.length === 0) return [];
 
   const now = new Date();
   const months: { month: string; label: string; netWorth: number }[] = [];
 
-  // Go back up to 12 months
+  // Go back up to 12 months (uses current crypto value for all months)
   for (let i = 11; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     const end = endOfMonth(d);
     const month = toYearMonth(d);
-    const nw = getNetWorth(accounts, transactions, btcPrice, btcAmount, end);
+    const nw = getNetWorth(accounts, transactions, cryptoValue, end);
     months.push({ month, label: formatMonth(month), netWorth: nw });
   }
 

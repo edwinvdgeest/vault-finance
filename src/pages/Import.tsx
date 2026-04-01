@@ -143,8 +143,8 @@ export default function Import() {
         onDrop={handleDrop}
         onDragOver={e => { e.preventDefault(); setDragging(true); }}
         onDragLeave={() => setDragging(false)}
-        onClick={() => fileRef.current?.click()}
         style={{
+          position: 'relative',
           border: dragging ? '2px dashed rgba(139,92,246,0.6)' : '2px dashed rgba(255,255,255,0.1)',
           cursor: 'pointer',
           textAlign: 'center',
@@ -158,18 +158,27 @@ export default function Import() {
           background: dragging ? 'rgba(139,92,246,0.05)' : undefined,
         }}
       >
+        {/* Native input overlays the entire drop zone — required for iOS Safari */}
         <input
           ref={fileRef}
           type="file"
           accept=".csv,.txt,.tab"
-          style={{ display: 'none' }}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            width: '100%',
+            height: '100%',
+            opacity: 0,
+            cursor: 'pointer',
+            zIndex: 1,
+          }}
           onChange={e => { if (e.target.files?.[0]) handleFile(e.target.files[0]); }}
         />
-        <p style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📂</p>
-        <p style={{ fontWeight: 500, marginBottom: '0.25rem' }}>
+        <p style={{ fontSize: '2rem', marginBottom: '0.5rem', pointerEvents: 'none' }}>📂</p>
+        <p style={{ fontWeight: 500, marginBottom: '0.25rem', pointerEvents: 'none' }}>
           {fileName || 'Sleep bestand hier of klik om te selecteren'}
         </p>
-        <p style={{ fontSize: '0.8rem', color: '#64748b' }}>
+        <p style={{ fontSize: '0.8rem', color: '#64748b', pointerEvents: 'none' }}>
           {bank === 'bunq'
             ? 'bunq CSV (puntkomma-gescheiden, met header)'
             : bank === 'triodos'
@@ -191,16 +200,31 @@ export default function Import() {
       )}
 
       {preview.length > 0 && (
+        <button
+          className="glass-button"
+          style={{
+            width: '100%',
+            padding: '0.875rem 1.5rem',
+            fontFamily: 'inherit',
+            fontSize: '1rem',
+            fontWeight: 700,
+            background: 'rgba(139,92,246,0.3)',
+            borderColor: 'rgba(139,92,246,0.6)',
+            color: 'white',
+            borderRadius: '0.75rem',
+            cursor: 'pointer',
+            letterSpacing: '0.02em',
+          }}
+          onClick={handleImport}
+        >
+          Importeren ({allParsed.length} transacties)
+        </button>
+      )}
+
+      {preview.length > 0 && (
         <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontWeight: 600 }}>Voorbeeld ({allParsed.length > 50 ? `${preview.length} van ${allParsed.length}` : preview.length} transacties)</span>
-            <button
-              className="glass-button"
-              style={{ padding: '0.5rem 1.25rem', fontFamily: 'inherit', fontSize: '0.875rem', fontWeight: 600, background: 'rgba(139,92,246,0.2)', borderColor: 'rgba(139,92,246,0.4)', color: 'white' }}
-              onClick={handleImport}
-            >
-              Importeer
-            </button>
           </div>
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>

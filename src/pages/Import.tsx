@@ -161,7 +161,7 @@ export default function Import() {
         <input
           ref={fileRef}
           type="file"
-          accept=".csv,.txt"
+          accept=".csv,.txt,.tab"
           style={{ display: 'none' }}
           onChange={e => { if (e.target.files?.[0]) handleFile(e.target.files[0]); }}
         />

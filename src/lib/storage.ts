@@ -31,6 +31,22 @@ async function apiPost<T>(path: string, body: unknown): Promise<T> {
   }
 }
 
+async function apiPut<T>(path: string, body: unknown): Promise<T> {
+  try {
+    const res = await fetch(API_BASE + '/api' + path, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(res.statusText);
+    return await res.json();
+  } catch {
+    const key = path.replace(/\//g, '');
+    localStorage.setItem('vault_' + key, JSON.stringify(body));
+    return body as T;
+  }
+}
+
 // In-memory cache for sync access (loaded on init)
 let _transactions: Transaction[] = [];
 let _accounts: Account[] = [];
@@ -53,14 +69,14 @@ export const storage = {
   getTransactions: () => _transactions,
   setTransactions: (txs: Transaction[]) => {
     _transactions = txs;
-    apiPost('/transactions', txs).catch(console.error);
+    apiPut('/transactions', txs).catch(console.error);
     localStorage.setItem('vault_transactions', JSON.stringify(txs));
   },
   addTransactions: (txs: Transaction[]) => {
     const ids = new Set(_transactions.map(t => t.id));
     const newOnes = txs.filter(t => !ids.has(t.id));
     _transactions = [..._transactions, ...newOnes];
-    apiPost('/transactions', txs).catch(console.error);
+    apiPost('/transactions', newOnes).catch(console.error);
     localStorage.setItem('vault_transactions', JSON.stringify(_transactions));
   },
 
@@ -95,7 +111,7 @@ export const storage = {
     settings: _settings,
   }),
   importAll: (data: { transactions?: Transaction[]; accounts?: Account[]; rules?: Rule[]; assets?: Asset[]; settings?: Record<string, unknown> }) => {
-    if (data.transactions) { _transactions = data.transactions; apiPost('/transactions', data.transactions).catch(console.error); }
+    if (data.transactions) { _transactions = data.transactions; apiPut('/transactions', data.transactions).catch(console.error); }
     if (data.accounts) { _accounts = data.accounts; apiPost('/accounts', data.accounts).catch(console.error); }
     if (data.rules) { _rules = data.rules; apiPost('/rules', data.rules).catch(console.error); }
     if (data.assets) { _assets = data.assets; apiPost('/assets', data.assets).catch(console.error); }

@@ -39,6 +39,12 @@ app.post('/api/transactions', (req, res) => {
   res.json({ imported: newTx.length, total: merged.length });
 });
 
+app.put('/api/transactions', (req, res) => {
+  const txs = req.body || [];
+  writeJSON('transactions.json', txs);
+  res.json({ total: txs.length });
+});
+
 app.put('/api/transactions/:id', (req, res) => {
   const txs = readJSON('transactions.json');
   const idx = txs.findIndex(t => t.id === req.params.id);

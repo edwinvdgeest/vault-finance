@@ -41,7 +41,7 @@ export default function Import() {
     setImported(null);
     const reader = new FileReader();
     reader.onload = (e) => parseFile(e.target?.result as string);
-    reader.readAsText(file, 'utf-8');
+    reader.readAsText(file, bank === 'abn' ? 'windows-1252' : 'utf-8');
   }
 
   function handleDrop(e: React.DragEvent) {

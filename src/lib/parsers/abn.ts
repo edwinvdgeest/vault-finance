@@ -32,18 +32,22 @@ function cleanDescription(description: string): string {
 }
 
 export function parseAbnTxt(text: string, rules: Rule[]): Transaction[] {
-  return text
+  // Strip UTF-8 BOM if present
+  const clean = text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
+  return clean
     .split('\n')
     .map(line => line.trimEnd())
     .filter(line => line.trim() !== '')
     .map(line => {
       const cols = line.split('\t');
-      if (cols.length < 9) return null;
+      // ABN AMRO TAB format: 8 columns (0-indexed)
+      // 0:IBAN  1:Currency  2:Date(YYYYMMDD)  3:BeginBalance  4:EndBalance  5:ValueDate  6:Amount  7:Description
+      if (cols.length < 8) return null;
 
-      const account = (cols[1] ?? '').trim();
-      const date = parseDate(cols[3] ?? '');
-      const amount = parseAmount(cols[7] ?? '0');
-      const rawDescription = cols[8] ?? '';
+      const account = (cols[0] ?? '').trim();
+      const date = parseDate(cols[2] ?? '');
+      const amount = parseAmount(cols[6] ?? '0');
+      const rawDescription = cols[7] ?? '';
       const description = cleanDescription(rawDescription);
       const counterparty = extractCounterparty(rawDescription);
       const name = counterparty;

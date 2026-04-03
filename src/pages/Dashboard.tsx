@@ -97,6 +97,7 @@ function computeTotalCryptoValue(assets: Asset[], prices: Record<string, number>
 export default function Dashboard() {
   const navigate = useNavigate();
   const [period, setPeriod] = useState<PeriodFilter>('year');
+  const [periodOffset, setPeriodOffset] = useState(0);
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [cryptoPrices, setCryptoPrices] = useState<Record<string, number>>({});
@@ -105,7 +106,7 @@ export default function Dashboard() {
   const accounts = storage.getAccounts();
   const assets = storage.getAssets();
 
-  const { start, end } = getPeriodDates(period, customStart, customEnd);
+  const { start, end, label: periodLabel } = getPeriodDates(period, customStart, customEnd, periodOffset);
   const periodTxs = filterByPeriod(transactions, start, end);
 
   const totalCryptoValue = computeTotalCryptoValue(assets, cryptoPrices);
@@ -194,27 +195,45 @@ export default function Dashboard() {
           </div>
 
           {/* Period filter */}
-          <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
-            {PERIOD_OPTIONS.map(opt => (
-              <button
-                key={opt.value}
-                onClick={() => setPeriod(opt.value)}
-                style={{
-                  padding: '0.375rem 0.875rem',
-                  borderRadius: '2rem',
-                  border: period === opt.value ? '1px solid rgba(139,92,246,0.6)' : '1px solid rgba(255,255,255,0.1)',
-                  background: period === opt.value ? 'rgba(139,92,246,0.2)' : 'rgba(255,255,255,0.04)',
-                  color: period === opt.value ? 'white' : '#94a3b8',
-                  fontSize: '0.8rem',
-                  fontWeight: period === opt.value ? 600 : 400,
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
-                  transition: 'all 0.15s',
-                }}
-              >
-                {opt.label}
-              </button>
-            ))}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-end' }}>
+            <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
+              {PERIOD_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => { setPeriod(opt.value); setPeriodOffset(0); }}
+                  style={{
+                    padding: '0.375rem 0.875rem',
+                    borderRadius: '2rem',
+                    border: period === opt.value ? '1px solid rgba(139,92,246,0.6)' : '1px solid rgba(255,255,255,0.1)',
+                    background: period === opt.value ? 'rgba(139,92,246,0.2)' : 'rgba(255,255,255,0.04)',
+                    color: period === opt.value ? 'white' : '#94a3b8',
+                    fontSize: '0.8rem',
+                    fontWeight: period === opt.value ? 600 : 400,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            {period !== 'custom' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <button
+                  onClick={() => setPeriodOffset(o => o - 1)}
+                  style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '1rem', padding: '0.2rem 0.5rem', fontFamily: 'inherit', lineHeight: 1 }}
+                >‹</button>
+                <span style={{ fontSize: '0.78rem', color: '#94a3b8', minWidth: 140, textAlign: 'center' }}>
+                  {periodLabel}
+                </span>
+                <button
+                  onClick={() => setPeriodOffset(o => Math.min(o + 1, 0))}
+                  disabled={periodOffset === 0}
+                  style={{ background: 'none', border: 'none', color: periodOffset === 0 ? '#334155' : '#94a3b8', cursor: periodOffset === 0 ? 'default' : 'pointer', fontSize: '1rem', padding: '0.2rem 0.5rem', fontFamily: 'inherit', lineHeight: 1 }}
+                >›</button>
+              </div>
+            )}
           </div>
         </div>
         {period === 'custom' && (

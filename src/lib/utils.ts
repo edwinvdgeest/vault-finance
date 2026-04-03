@@ -42,23 +42,41 @@ export function getPeriodDates(
   period: PeriodFilter,
   customStart?: string,
   customEnd?: string,
-): { start: Date; end: Date } {
+  offset = 0,
+): { start: Date; end: Date; label: string } {
   const now = new Date();
   switch (period) {
-    case 'this-month':
-      return { start: startOfMonth(now), end: now };
-    case 'last-month': {
-      const lm = addMonths(now, -1);
-      return { start: startOfMonth(lm), end: endOfMonth(lm) };
+    case 'this-month': {
+      const ref = addMonths(now, offset);
+      const s = startOfMonth(ref);
+      const e = offset === 0 ? now : endOfMonth(ref);
+      const label = s.toLocaleDateString('nl-NL', { month: 'long', year: 'numeric' });
+      return { start: s, end: e, label };
     }
-    case 'quarter':
-      return { start: addMonths(startOfMonth(now), -2), end: now };
-    case 'year':
-      return { start: addMonths(startOfMonth(now), -11), end: now };
+    case 'last-month': {
+      const ref = addMonths(now, -1 + offset);
+      const label = ref.toLocaleDateString('nl-NL', { month: 'long', year: 'numeric' });
+      return { start: startOfMonth(ref), end: endOfMonth(ref), label };
+    }
+    case 'quarter': {
+      const endRef = addMonths(now, offset * 3);
+      const startRef = addMonths(startOfMonth(endRef), -2);
+      const e = offset === 0 ? now : endOfMonth(endRef);
+      const label = `${startRef.toLocaleDateString('nl-NL', { month: 'short' })} – ${e.toLocaleDateString('nl-NL', { month: 'short', year: 'numeric' })}`;
+      return { start: startRef, end: e, label };
+    }
+    case 'year': {
+      const endRef = addMonths(now, offset * 12);
+      const startRef = addMonths(startOfMonth(endRef), -11);
+      const e = offset === 0 ? now : endOfMonth(endRef);
+      const label = `${startRef.toLocaleDateString('nl-NL', { month: 'short', year: 'numeric' })} – ${e.toLocaleDateString('nl-NL', { month: 'short', year: 'numeric' })}`;
+      return { start: startRef, end: e, label };
+    }
     case 'custom':
       return {
         start: customStart ? new Date(customStart + 'T00:00:00') : startOfMonth(now),
         end: customEnd ? new Date(customEnd + 'T23:59:59') : now,
+        label: '',
       };
   }
 }

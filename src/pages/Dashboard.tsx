@@ -24,7 +24,16 @@ import {
   getTopExpenses,
   getLastMonthEnd,
   filterByPeriod,
+  getPeriodSummary,
+  getRecurringExpenses,
+  getCategoryTrend,
+  getLabelSpending,
+  getBudgetProgress,
+  getTopMerchants,
+  getCashflowSankey,
 } from '../lib/analytics';
+import type { SankeyData } from '../lib/analytics';
+import { sankey as d3Sankey, sankeyLinkHorizontal } from 'd3-sankey';
 import { formatCurrency, getPeriodDates } from '../lib/utils';
 import type { Asset, PeriodFilter } from '../types';
 
@@ -80,8 +89,125 @@ function assetPrice(a: Asset, prices: Record<string, number>): number {
   return prices[a.type] ?? a.currentPrice ?? a.lastPrice ?? 0;
 }
 
+function MiniSparkline({ data, color, width = 60, height = 20 }: { data: number[]; color: string; width?: number; height?: number }) {
+  if (data.length < 2) return null;
+  const max = Math.max(...data, 0.01);
+  const min = Math.min(...data, 0);
+  const range = max - min || 1;
+  const points = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * width;
+    const y = height - ((v - min) / range) * (height - 2) - 1;
+    return `${x},${y}`;
+  }).join(' ');
+  return (
+    <svg width={width} height={height} style={{ flexShrink: 0 }}>
+      <polyline points={points} fill="none" stroke={color} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function computeTotalCryptoValue(assets: Asset[], prices: Record<string, number>): number {
   return assets.reduce((sum, a) => sum + a.amount * assetPrice(a, prices), 0);
+}
+
+const SANKEY_COLORS = [
+  '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444',
+  '#ec4899', '#6366f1', '#14b8a6', '#f97316', '#84cc16',
+  '#a855f7', '#22d3ee', '#34d399', '#fbbf24', '#f87171',
+];
+
+function CashflowSankey({ data, width = 700, height = 360 }: { data: SankeyData; width?: number; height?: number }) {
+  if (data.links.length === 0) return <p style={{ color: '#64748b', fontSize: '0.85rem' }}>Geen cashflow data</p>;
+
+  // Map string IDs to numeric indices for d3-sankey
+  const nodeIndex = new Map(data.nodes.map((n, i) => [n.id, i]));
+  const sankeyData = {
+    nodes: data.nodes.map(n => ({ ...n })),
+    links: data.links.map(l => ({
+      source: nodeIndex.get(l.source) ?? 0,
+      target: nodeIndex.get(l.target) ?? 0,
+      value: l.value,
+    })),
+  };
+
+  const generator = d3Sankey<{ id: string; label: string }, { source: number; target: number; value: number }>()
+    .nodeId((_d, i) => i)
+    .nodeWidth(14)
+    .nodePadding(10)
+    .nodeAlign((node) => {
+      // Custom alignment: income sources = 0 (left), hub = 1 (center), expenses = 2 (right)
+      const n = data.nodes[(node as unknown as { index: number }).index ?? 0];
+      if (!n) return 1;
+      if (n.id.startsWith('in_')) return 0;
+      if (n.id === 'hub_income') return 1;
+      return 2;
+    })
+    .extent([[140, 8], [width - 140, height - 8]]);
+
+  const layout = generator(sankeyData as Parameters<typeof generator>[0]);
+  const pathGen = sankeyLinkHorizontal();
+
+  return (
+    <svg width={width} height={height} style={{ width: '100%', height: 'auto' }} viewBox={`0 0 ${width} ${height}`}>
+      {/* Links */}
+      {(layout.links ?? []).map((link, i) => {
+        const sourceNode = typeof link.source === 'object' ? link.source : null;
+        const color = SANKEY_COLORS[i % SANKEY_COLORS.length];
+        // Savings link gets green
+        const targetNode = typeof link.target === 'object' ? link.target : null;
+        const isGespaard = targetNode && 'id' in targetNode && (targetNode as { id: string }).id === 'out_savings';
+        return (
+          <path
+            key={i}
+            d={pathGen(link as Parameters<typeof pathGen>[0]) ?? ''}
+            fill="none"
+            stroke={isGespaard ? '#10b981' : color}
+            strokeOpacity={0.35}
+            strokeWidth={Math.max((link as { width?: number }).width ?? 1, 1)}
+          >
+            <title>
+              {sourceNode && 'label' in sourceNode ? (sourceNode as { label: string }).label : ''} → {targetNode && 'label' in targetNode ? (targetNode as { label: string }).label : ''}: {formatCurrency(link.value)}
+            </title>
+          </path>
+        );
+      })}
+      {/* Nodes */}
+      {(layout.nodes ?? []).map((node, i) => {
+        const x0 = (node as { x0?: number }).x0 ?? 0;
+        const x1 = (node as { x1?: number }).x1 ?? 0;
+        const y0 = (node as { y0?: number }).y0 ?? 0;
+        const y1 = (node as { y1?: number }).y1 ?? 0;
+        const n = node as { id?: string; label?: string };
+        const isHub = n.id === 'hub_income';
+        const isGespaard = n.id === 'out_savings';
+        const isIncome = n.id?.startsWith('in_');
+        const nodeColor = isGespaard ? '#10b981' : isHub ? '#8b5cf6' : isIncome ? '#06b6d4' : SANKEY_COLORS[i % SANKEY_COLORS.length];
+        const nodeHeight = y1 - y0;
+
+        return (
+          <g key={i}>
+            <rect
+              x={x0} y={y0} width={x1 - x0} height={nodeHeight}
+              fill={nodeColor} rx={2} opacity={0.85}
+            />
+            {nodeHeight > 12 && (
+              <text
+                x={isIncome ? x0 - 6 : x1 + 6}
+                y={(y0 + y1) / 2}
+                dy="0.35em"
+                textAnchor={isIncome ? 'end' : 'start'}
+                fill="#cbd5e1"
+                fontSize={10}
+                fontFamily="Inter, sans-serif"
+              >
+                {(n.label ?? '').length > 24 ? (n.label ?? '').slice(0, 22) + '…' : n.label}
+              </text>
+            )}
+          </g>
+        );
+      })}
+    </svg>
+  );
 }
 
 export default function Dashboard() {
@@ -109,6 +235,14 @@ export default function Dashboard() {
   const categoryData = getCategorySpending(periodTxs);
   const accountData = getAccountBreakdown(accounts, transactions);
   const top5 = getTopExpenses(periodTxs);
+  const periodSummary = getPeriodSummary(periodTxs);
+  const recurring = getRecurringExpenses(transactions);
+  const categoryTrends = getCategoryTrend(transactions);
+  const labelSpending = getLabelSpending(periodTxs);
+  const budgets = storage.getBudgets();
+  const budgetProgress = getBudgetProgress(periodTxs, budgets, start, end);
+  const topMerchants = getTopMerchants(periodTxs);
+  const cashflowSankey = getCashflowSankey(periodTxs);
 
   useEffect(() => {
     fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${COINGECKO_IDS}&vs_currencies=eur`)
@@ -218,6 +352,40 @@ export default function Dashboard() {
           </div>
         )}
       </GlassCard>
+
+      {/* Cashflow KPI's */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }} className="grid-kpis">
+        <GlassCard>
+          <SectionTitle>Inkomsten</SectionTitle>
+          <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#10b981' }}>
+            {formatCurrency(periodSummary.income)}
+          </div>
+        </GlassCard>
+        <GlassCard>
+          <SectionTitle>Uitgaven</SectionTitle>
+          <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#ef4444' }}>
+            {formatCurrency(periodSummary.expenses)}
+          </div>
+        </GlassCard>
+        <GlassCard>
+          <SectionTitle>Cashflow</SectionTitle>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
+            <span style={{ fontSize: '1.5rem', fontWeight: 700, color: periodSummary.cashflow >= 0 ? '#10b981' : '#ef4444' }}>
+              {periodSummary.cashflow >= 0 ? '+' : ''}{formatCurrency(periodSummary.cashflow)}
+            </span>
+            {periodSummary.savingsRate !== 0 && (
+              <span style={{
+                fontSize: '0.8rem', fontWeight: 600,
+                color: periodSummary.savingsRate >= 0 ? '#10b981' : '#ef4444',
+                background: periodSummary.savingsRate >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+                padding: '0.15rem 0.5rem', borderRadius: '1rem',
+              }}>
+                {periodSummary.savingsRate >= 0 ? '+' : ''}{periodSummary.savingsRate}%
+              </span>
+            )}
+          </div>
+        </GlassCard>
+      </div>
 
       {/* Crypto Portfolio */}
       {assets.length > 0 && (
@@ -428,17 +596,21 @@ export default function Dashboard() {
                 </ResponsiveContainer>
               </div>
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                {categoryData.slice(0, 8).map((cat, i) => (
-                  <div key={cat.category} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                      <div style={{ width: 7, height: 7, borderRadius: '50%', background: PIE_COLORS[i % PIE_COLORS.length], flexShrink: 0 }} />
-                      <span style={{ fontSize: '0.75rem', color: '#cbd5e1' }}>{cat.category}</span>
+                {categoryData.slice(0, 8).map((cat, i) => {
+                  const trend = categoryTrends.get(cat.category);
+                  return (
+                    <div key={cat.category} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.4rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flex: 1, minWidth: 0 }}>
+                        <div style={{ width: 7, height: 7, borderRadius: '50%', background: PIE_COLORS[i % PIE_COLORS.length], flexShrink: 0 }} />
+                        <span style={{ fontSize: '0.75rem', color: '#cbd5e1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cat.category}</span>
+                      </div>
+                      {trend && <MiniSparkline data={trend.map(t => t.amount)} color={PIE_COLORS[i % PIE_COLORS.length]} />}
+                      <span style={{ fontSize: '0.75rem', color: '#ef4444', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                        {formatCurrency(cat.amount)}
+                      </span>
                     </div>
-                    <span style={{ fontSize: '0.75rem', color: '#ef4444', fontWeight: 600 }}>
-                      {formatCurrency(cat.amount)}
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ) : (
@@ -446,6 +618,71 @@ export default function Dashboard() {
           )}
         </GlassCard>
       </div>
+
+      {/* Cashflow Sankey */}
+      {cashflowSankey.links.length > 0 && (
+        <GlassCard>
+          <SectionTitle>Cashflow</SectionTitle>
+          <CashflowSankey data={cashflowSankey} />
+        </GlassCard>
+      )}
+
+      {/* Budget vs. Actual */}
+      {budgetProgress.length > 0 && (
+        <GlassCard>
+          <SectionTitle>Budget</SectionTitle>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+            {budgetProgress.map(b => {
+              const color = b.percentage > 100 ? '#ef4444' : b.percentage > 80 ? '#f59e0b' : '#10b981';
+              const barWidth = Math.min(b.percentage, 100);
+              return (
+                <div key={b.category}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '0.25rem' }}>
+                    <span style={{ fontSize: '0.8rem', color: '#cbd5e1' }}>{b.category}</span>
+                    <span style={{ fontSize: '0.75rem', color }}>
+                      {formatCurrency(b.spent)} / {formatCurrency(b.limit)}
+                      <span style={{ marginLeft: '0.4rem', fontWeight: 600 }}>({b.percentage}%)</span>
+                    </span>
+                  </div>
+                  <div style={{ height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 3, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${barWidth}%`, background: color, borderRadius: 3, transition: 'width 0.3s' }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </GlassCard>
+      )}
+
+      {/* Top merchants */}
+      {topMerchants.length > 0 && (
+        <GlassCard>
+          <SectionTitle>Top tegenpartijen</SectionTitle>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+            {topMerchants.map((m, i) => (
+              <div
+                key={m.name}
+                style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem',
+                  padding: '0.4rem 0.625rem',
+                  background: 'rgba(255,255,255,0.03)', borderRadius: '0.375rem',
+                  border: '1px solid rgba(255,255,255,0.05)',
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 600, minWidth: '1.2rem' }}>{i + 1}</span>
+                  <span style={{ fontSize: '0.8rem', color: '#cbd5e1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.name}</span>
+                </div>
+                <MiniSparkline data={m.trend} color={PIE_COLORS[i % PIE_COLORS.length]} />
+                <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#ef4444' }}>{formatCurrency(m.total)}</div>
+                  <div style={{ fontSize: '0.65rem', color: '#64748b' }}>{m.count}×</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </GlassCard>
+      )}
 
       {/* Top 5 expenses */}
       <GlassCard>
@@ -479,6 +716,76 @@ export default function Dashboard() {
           <p style={{ color: '#64748b', fontSize: '0.85rem' }}>Geen uitgaven in deze periode</p>
         )}
       </GlassCard>
+
+      {/* Recurring expenses + Label spending */}
+      <div className="grid-halves">
+        {/* Vaste lasten */}
+        {recurring.length > 0 && (
+          <GlassCard>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+              <SectionTitle>Vaste lasten</SectionTitle>
+              <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#ef4444' }}>
+                {formatCurrency(recurring.reduce((s, r) => s + r.avgAmount, 0))}/mnd
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+              {recurring.slice(0, 10).map(r => (
+                <div
+                  key={r.name}
+                  style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '0.4rem 0.625rem',
+                    background: 'rgba(255,255,255,0.03)', borderRadius: '0.375rem',
+                    border: '1px solid rgba(255,255,255,0.05)',
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '0.8rem', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</div>
+                    <div style={{ fontSize: '0.68rem', color: '#64748b' }}>{r.category}</div>
+                  </div>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#ef4444', whiteSpace: 'nowrap' }}>
+                    {formatCurrency(r.avgAmount)}/mnd
+                  </span>
+                </div>
+              ))}
+            </div>
+          </GlassCard>
+        )}
+
+        {/* Label spending */}
+        {labelSpending.length > 0 && (
+          <GlassCard>
+            <SectionTitle>Uitgaven per label</SectionTitle>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+              {labelSpending.map(ls => (
+                <div
+                  key={ls.label}
+                  style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '0.4rem 0.625rem',
+                    background: 'rgba(255,255,255,0.03)', borderRadius: '0.375rem',
+                    border: '1px solid rgba(255,255,255,0.05)',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <span style={{
+                      fontSize: '0.72rem', color: '#fbbf24',
+                      background: 'rgba(245,158,11,0.12)', padding: '0.1rem 0.4rem',
+                      borderRadius: '0.5rem', border: '1px solid rgba(245,158,11,0.25)',
+                    }}>
+                      {ls.label}
+                    </span>
+                    <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{ls.count} transacties</span>
+                  </div>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 600, color: ls.amount >= 0 ? '#10b981' : '#ef4444', whiteSpace: 'nowrap' }}>
+                    {ls.amount >= 0 ? '+' : ''}{formatCurrency(ls.amount)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </GlassCard>
+        )}
+      </div>
     </div>
   );
 }

@@ -9,6 +9,9 @@ export interface Transaction {
   description: string;
   category: string;
   originalDescription: string;
+  labels?: string[];
+  note?: string;
+  isInternal?: boolean;
 }
 
 export interface Account {
@@ -36,6 +39,11 @@ export interface Asset {
   currentPrice: number; // EUR price per unit
   lastPrice: number; // backward compat (same as currentPrice)
   lastUpdated: string;
+}
+
+export interface Budget {
+  category: string;
+  monthlyLimit: number;
 }
 
 export type BankType = 'bunq' | 'triodos' | 'abn';

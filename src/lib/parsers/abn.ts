@@ -2,7 +2,8 @@ import type { Transaction, Rule } from '../../types';
 import { categorize } from '../categorizer';
 
 function parseAmount(raw: string): number {
-  return parseFloat(raw.replace(',', '.'));
+  // "3.000,00" or "-86,00" -> number
+  return parseFloat(raw.replace(/\./g, '').replace(',', '.'));
 }
 
 function parseDate(raw: string): string {
@@ -20,14 +21,62 @@ function hashId(str: string): string {
   return hash.toString(36);
 }
 
+/** Parse SEPA-style slash-delimited tags into a key-value map */
+export function parseSepaFields(raw: string): Record<string, string> | null {
+  // Match descriptions containing /TAG/VALUE patterns
+  if (!raw.includes('/TRTP/') && !raw.includes('/REMI/') && !raw.includes('/NAME/') && !raw.includes('/IBAN/')) {
+    return null;
+  }
+  const fields: Record<string, string> = {};
+  // Split on /KEY/ patterns — keys are uppercase alpha, 2-5 chars
+  const regex = /\/([A-Z]{2,5})\//g;
+  const keys: { key: string; start: number; end: number }[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(raw)) !== null) {
+    keys.push({ key: match[1], start: match.index, end: match.index + match[0].length });
+  }
+  for (let i = 0; i < keys.length; i++) {
+    const valueStart = keys[i].end;
+    const valueEnd = i + 1 < keys.length ? keys[i + 1].start : raw.length;
+    fields[keys[i].key] = raw.slice(valueStart, valueEnd).trim();
+  }
+  return Object.keys(fields).length > 0 ? fields : null;
+}
+
+/** Build a human-readable description from SEPA fields */
+function formatSepaDescription(fields: Record<string, string>): string {
+  const parts: string[] = [];
+  // NAME = counterparty name
+  if (fields.NAME) parts.push(fields.NAME);
+  // REMI = remittance info / payment description
+  if (fields.REMI) parts.push(fields.REMI);
+  // EREF = end-to-end reference (only if meaningful)
+  if (fields.EREF && fields.EREF !== 'NOTPROVIDED') parts.push(`ref: ${fields.EREF}`);
+  // MARF = mandate reference (direct debits)
+  if (fields.MARF) parts.push(`mandaat: ${fields.MARF}`);
+  return parts.join(' — ');
+}
+
 function extractCounterparty(description: string): string {
-  // Description uses fixed-width padding; split on 2+ spaces to get segments
+  // First try to extract from SEPA fields
+  const sepa = parseSepaFields(description);
+  if (sepa?.NAME) return sepa.NAME;
+
+  // Fallback: description uses fixed-width padding; split on 2+ spaces to get segments
   const parts = description.split(/\s{2,}/).map(p => p.trim()).filter(Boolean);
   // parts[0] = transaction type (BEA, SEPA, iDEAL, etc.), parts[1] = counterparty name
-  return parts[1] ?? parts[0] ?? '';
+  const candidate = parts[1] ?? parts[0] ?? '';
+  // If the candidate still looks like a raw SEPA string, return empty so description is used instead
+  if (candidate.startsWith('/TRTP/') || candidate.startsWith('/IBAN/')) return '';
+  return candidate;
 }
 
 function cleanDescription(description: string): string {
+  // Try SEPA field parsing first
+  const sepa = parseSepaFields(description);
+  if (sepa) return formatSepaDescription(sepa);
+
+  // Fallback: collapse whitespace for non-SEPA descriptions (BEA, GEA, etc.)
   return description.replace(/\s{2,}/g, ' ').trim();
 }
 

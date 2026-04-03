@@ -3,7 +3,7 @@ import { storage } from '../lib/storage';
 import { getDefaultRulesWithIds, categorize } from '../lib/categorizer';
 import { formatCurrency } from '../lib/utils';
 import { CATEGORIES } from '../types';
-import type { Asset, Rule, Account } from '../types';
+import type { Asset, Rule, Account, Budget } from '../types';
 
 const KNOWN_COINS: { type: string; symbol: string; name: string }[] = [
   { type: 'bitcoin', symbol: 'BTC', name: 'Bitcoin' },
@@ -54,11 +54,15 @@ export default function Settings() {
   });
   const [newPattern, setNewPattern] = useState('');
   const [newCategory, setNewCategory] = useState<string>(CATEGORIES[0]);
+  const [editingRule, setEditingRule] = useState<{ id: string; pattern: string; category: string } | null>(null);
 
   const [cryptoHoldings, setCryptoHoldings] = useState<CryptoEdit[]>(() =>
     storage.getAssets().map(assetToEdit),
   );
   const [newCoinType, setNewCoinType] = useState(KNOWN_COINS[0].type);
+
+  const [budgets, setBudgets] = useState<Budget[]>(() => storage.getBudgets());
+  const [newBudgetCategory, setNewBudgetCategory] = useState('');
 
   const [saved, setSaved] = useState('');
   const [onlyOverig, setOnlyOverig] = useState(true);
@@ -103,6 +107,19 @@ export default function Settings() {
 
   function deleteRule(id: string) {
     saveRules(rules.filter(r => r.id !== id));
+  }
+
+  function startEditRule(rule: Rule) {
+    setEditingRule({ id: rule.id, pattern: rule.pattern, category: rule.category });
+  }
+
+  function commitEditRule() {
+    if (!editingRule) return;
+    const trimmed = editingRule.pattern.trim();
+    if (!trimmed) { setEditingRule(null); return; }
+    saveRules(rules.map(r => r.id === editingRule.id ? { ...r, pattern: trimmed, category: editingRule.category } : r));
+    setEditingRule(null);
+    showSaved('Regel opgeslagen');
   }
 
   function recategorize() {
@@ -449,6 +466,83 @@ export default function Settings() {
         </button>
       </div>
 
+      {/* Budgets */}
+      <div className="glass-card">
+        <p style={sectionTitle}>Budgetten per categorie</p>
+
+        {budgets.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
+            {budgets.map((b, idx) => (
+              <div
+                key={b.category}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '0.75rem',
+                  padding: '0.625rem 0.875rem',
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid rgba(255,255,255,0.07)',
+                  borderRadius: '0.5rem',
+                }}
+              >
+                <span style={{ fontSize: '0.85rem', color: '#cbd5e1', flex: 1 }}>{b.category}</span>
+                <span style={{ fontSize: '0.8rem', color: '#64748b', flexShrink: 0 }}>€</span>
+                <input
+                  type="number"
+                  step="10"
+                  className="glass-input"
+                  style={{ padding: '0.375rem 0.5rem', fontSize: '0.85rem', textAlign: 'right', width: '6rem' }}
+                  value={b.monthlyLimit || ''}
+                  placeholder="0"
+                  onChange={e => {
+                    const val = parseFloat(e.target.value) || 0;
+                    const updated = budgets.map((bb, i) => i === idx ? { ...bb, monthlyLimit: val } : bb);
+                    setBudgets(updated);
+                    storage.setBudgets(updated);
+                  }}
+                />
+                <span style={{ fontSize: '0.72rem', color: '#475569', flexShrink: 0 }}>/mnd</span>
+                <button
+                  onClick={() => {
+                    const updated = budgets.filter((_, i) => i !== idx);
+                    setBudgets(updated);
+                    storage.setBudgets(updated);
+                  }}
+                  style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1.1rem', padding: '0.25rem', lineHeight: 1, transition: 'color 0.15s', flexShrink: 0 }}
+                  onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
+                  onMouseLeave={e => (e.currentTarget.style.color = '#64748b')}
+                >×</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+          <select
+            className="glass-input"
+            style={{ ...inputStyle, flex: 1 }}
+            value={newBudgetCategory}
+            onChange={e => setNewBudgetCategory(e.target.value)}
+          >
+            <option value="">Categorie kiezen...</option>
+            {CATEGORIES.filter(c => !budgets.some(b => b.category === c) && c !== 'Overboekingen' && c !== 'Inkomen').map(c => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          <button
+            className="glass-button"
+            style={{ fontFamily: 'inherit', padding: '0.5rem 1rem', fontSize: '0.875rem', fontWeight: 600, whiteSpace: 'nowrap', background: 'rgba(139,92,246,0.2)', borderColor: 'rgba(139,92,246,0.4)', color: 'white' }}
+            onClick={() => {
+              if (!newBudgetCategory) return;
+              const updated = [...budgets, { category: newBudgetCategory, monthlyLimit: 0 }];
+              setBudgets(updated);
+              storage.setBudgets(updated);
+              setNewBudgetCategory('');
+            }}
+          >
+            + Toevoegen
+          </button>
+        </div>
+      </div>
+
       {/* Category rules */}
       <div className="glass-card">
         <p style={sectionTitle}>Categorieregels</p>
@@ -502,41 +596,86 @@ export default function Settings() {
 
         {/* Rules list */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
-          {rules.map(rule => (
-            <div
-              key={rule.id}
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                padding: '0.5rem 0.875rem',
-                background: 'rgba(255,255,255,0.03)',
-                border: '1px solid rgba(255,255,255,0.07)',
-                borderRadius: '0.5rem',
-              }}
-            >
-              <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flex: 1, minWidth: 0 }}>
-                <code style={{ fontSize: '0.8rem', color: '#c4b5fd', background: 'rgba(139,92,246,0.1)', padding: '0.125rem 0.375rem', borderRadius: '0.25rem', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {rule.pattern}
-                </code>
-                <span style={{ fontSize: '0.8rem', color: '#94a3b8', whiteSpace: 'nowrap' }}>→ {rule.category}</span>
-                {rule.isCustom && (
-                  <span style={{ fontSize: '0.7rem', color: '#06b6d4', background: 'rgba(6,182,212,0.1)', padding: '0.1rem 0.4rem', borderRadius: '0.75rem', border: '1px solid rgba(6,182,212,0.2)' }}>
-                    eigen
-                  </span>
+          {rules.map(rule => {
+            const isEditing = editingRule?.id === rule.id;
+            return (
+              <div
+                key={rule.id}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '0.5rem 0.875rem',
+                  background: isEditing ? 'rgba(139,92,246,0.08)' : 'rgba(255,255,255,0.03)',
+                  border: isEditing ? '1px solid rgba(139,92,246,0.3)' : '1px solid rgba(255,255,255,0.07)',
+                  borderRadius: '0.5rem',
+                  transition: 'background 0.15s, border-color 0.15s',
+                }}
+              >
+                {isEditing ? (
+                  <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flex: 1, minWidth: 0 }}>
+                    <input
+                      autoFocus
+                      className="glass-input"
+                      style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', flex: 1, fontFamily: 'monospace' }}
+                      value={editingRule.pattern}
+                      onChange={e => setEditingRule({ ...editingRule, pattern: e.target.value })}
+                      onKeyDown={e => { if (e.key === 'Enter') commitEditRule(); if (e.key === 'Escape') setEditingRule(null); }}
+                    />
+                    <select
+                      className="glass-input"
+                      style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', minWidth: 130 }}
+                      value={editingRule.category}
+                      onChange={e => setEditingRule({ ...editingRule, category: e.target.value })}
+                    >
+                      {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                    <button
+                      onClick={commitEditRule}
+                      style={{ background: 'none', border: 'none', color: '#10b981', cursor: 'pointer', fontSize: '1rem', padding: '0.25rem', lineHeight: 1, fontWeight: 700 }}
+                      title="Opslaan"
+                    >
+                      ✓
+                    </button>
+                    <button
+                      onClick={() => setEditingRule(null)}
+                      style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1rem', padding: '0.25rem', lineHeight: 1 }}
+                      title="Annuleren"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div
+                      style={{ display: 'flex', gap: '1rem', alignItems: 'center', flex: 1, minWidth: 0, cursor: 'pointer' }}
+                      onClick={() => startEditRule(rule)}
+                      title="Klik om te bewerken"
+                    >
+                      <code style={{ fontSize: '0.8rem', color: '#c4b5fd', background: 'rgba(139,92,246,0.1)', padding: '0.125rem 0.375rem', borderRadius: '0.25rem', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {rule.pattern}
+                      </code>
+                      <span style={{ fontSize: '0.8rem', color: '#94a3b8', whiteSpace: 'nowrap' }}>→ {rule.category}</span>
+                      {rule.isCustom && (
+                        <span style={{ fontSize: '0.7rem', color: '#06b6d4', background: 'rgba(6,182,212,0.1)', padding: '0.1rem 0.4rem', borderRadius: '0.75rem', border: '1px solid rgba(6,182,212,0.2)' }}>
+                          eigen
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => deleteRule(rule.id)}
+                      style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1rem', padding: '0.25rem', lineHeight: 1, transition: 'color 0.15s' }}
+                      title="Verwijder regel"
+                      onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
+                      onMouseLeave={e => (e.currentTarget.style.color = '#64748b')}
+                    >
+                      ×
+                    </button>
+                  </>
                 )}
               </div>
-              <button
-                onClick={() => deleteRule(rule.id)}
-                style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1rem', padding: '0.25rem', lineHeight: 1, transition: 'color 0.15s' }}
-                title="Verwijder regel"
-                onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
-                onMouseLeave={e => (e.currentTarget.style.color = '#64748b')}
-              >
-                ×
-              </button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -550,6 +689,13 @@ export default function Settings() {
             onClick={exportData}
           >
             Export backup (JSON)
+          </button>
+          <button
+            className="glass-button"
+            style={{ fontFamily: 'inherit', padding: '0.5rem 1.25rem', fontSize: '0.875rem', background: 'rgba(6,182,212,0.15)', borderColor: 'rgba(6,182,212,0.3)', color: 'white' }}
+            onClick={() => { storage.refreshInternalFlags(); showSaved('Interne overboekingen gedetecteerd'); }}
+          >
+            Herdetecteer interne overboekingen
           </button>
           <label
             style={{

@@ -12,6 +12,7 @@
   "dependencies": {
     "@tailwindcss/vite": "^4.2.2",
     "cors": "^2.8.6",
+    "d3-sankey": "^0.12.3",
     "express": "^5.2.1",
     "papaparse": "^5.5.3",
     "react": "^19.2.4",
@@ -22,6 +23,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@types/d3-sankey": "^0.12.5",
     "@types/node": "^24.12.0",
     "@types/papaparse": "^5.5.2",
     "@types/react": "^19.2.14",

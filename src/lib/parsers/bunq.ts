@@ -3,8 +3,9 @@ import type { Transaction, Rule } from '../../types';
 import { categorize } from '../categorizer';
 
 function parseAmount(raw: string): number {
-  // "-86,00" or "86,00" -> number
-  return parseFloat(raw.replace(',', '.'));
+  // "3.000,00" or "-86,00" -> number
+  // Remove thousand separators (dots), then replace decimal comma with dot
+  return parseFloat(raw.replace(/\./g, '').replace(',', '.'));
 }
 
 export function parseBunqCsv(csvText: string, rules: Rule[]): Transaction[] {

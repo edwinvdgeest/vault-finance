@@ -299,6 +299,7 @@ export function getTopMerchants(
   }
 
   return [...merchants.entries()]
+    .filter(([, m]) => m.count >= 2)
     .sort(([, a], [, b]) => b.total - a.total)
     .slice(0, limit)
     .map(([name, m]) => ({

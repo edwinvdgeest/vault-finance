@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   LineChart,
   Line,
@@ -94,6 +95,7 @@ function computeTotalCryptoValue(assets: Asset[], prices: Record<string, number>
 }
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const [period, setPeriod] = useState<PeriodFilter>('year');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
@@ -575,6 +577,7 @@ export default function Dashboard() {
             {top5.map(tx => (
               <div
                 key={tx.id}
+                onClick={() => navigate(`/transactions?start=${tx.date}&end=${tx.date}`)}
                 style={{
                   display: 'flex',
                   justifyContent: 'space-between',
@@ -583,7 +586,11 @@ export default function Dashboard() {
                   background: 'rgba(255,255,255,0.03)',
                   borderRadius: '0.5rem',
                   border: '1px solid rgba(255,255,255,0.06)',
+                  cursor: 'pointer',
+                  transition: 'background 0.15s',
                 }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.03)')}
               >
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
                   <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>{tx.name || tx.counterparty}</span>

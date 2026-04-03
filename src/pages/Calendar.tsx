@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { storage } from '../lib/storage';
 import { formatCurrency } from '../lib/utils';
 import type { Transaction } from '../types';
@@ -25,6 +26,7 @@ export default function Calendar() {
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth()); // 0-indexed
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   const transactions = storage.getTransactions();
   const accounts = storage.getAccounts();
@@ -274,6 +276,13 @@ export default function Calendar() {
               </div>
             ))}
           </div>
+          <button
+            className="glass-button"
+            style={{ marginTop: '0.75rem', padding: '0.4rem 1rem', fontSize: '0.8rem', fontFamily: 'inherit', color: '#94a3b8', width: '100%' }}
+            onClick={() => navigate(`/transactions?start=${selectedDate}&end=${selectedDate}`)}
+          >
+            Bekijk in transacties
+          </button>
         </div>
       )}
     </div>

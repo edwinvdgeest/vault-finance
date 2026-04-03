@@ -202,6 +202,42 @@
     gap: 0.625rem;
   }
 
+  .section-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 0.75rem;
+  }
+
+  .badge-category {
+    background: rgba(139, 92, 246, 0.12);
+    border: 1px solid rgba(139, 92, 246, 0.25);
+    border-radius: 1rem;
+    color: #c4b5fd;
+    padding: 0.15rem 0.5rem;
+    font-size: 0.72rem;
+  }
+
+  .badge-label {
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: 1rem;
+    color: #fbbf24;
+    padding: 0.15rem 0.5rem;
+    font-size: 0.72rem;
+  }
+
+  .toast-success {
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    border-radius: 0.5rem;
+    padding: 0.625rem 1rem;
+    color: #6ee7b7;
+    font-size: 0.875rem;
+  }
+
   /* Filter toggle button — mobile only */
   .filter-toggle-btn {
     display: none;

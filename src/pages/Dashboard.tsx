@@ -32,9 +32,9 @@ import {
   getTopMerchants,
   getCashflowSankey,
 } from '../lib/analytics';
-import type { SankeyData } from '../lib/analytics';
-import { sankey as d3Sankey, sankeyLinkHorizontal } from 'd3-sankey';
 import { formatCurrency, getPeriodDates } from '../lib/utils';
+import MiniSparkline from '../components/MiniSparkline';
+import CashflowSankey from '../components/CashflowSankey';
 import type { Asset, PeriodFilter } from '../types';
 
 const PERIOD_OPTIONS: { value: PeriodFilter; label: string }[] = [
@@ -89,125 +89,8 @@ function assetPrice(a: Asset, prices: Record<string, number>): number {
   return prices[a.type] ?? a.currentPrice ?? a.lastPrice ?? 0;
 }
 
-function MiniSparkline({ data, color, width = 60, height = 20 }: { data: number[]; color: string; width?: number; height?: number }) {
-  if (data.length < 2) return null;
-  const max = Math.max(...data, 0.01);
-  const min = Math.min(...data, 0);
-  const range = max - min || 1;
-  const points = data.map((v, i) => {
-    const x = (i / (data.length - 1)) * width;
-    const y = height - ((v - min) / range) * (height - 2) - 1;
-    return `${x},${y}`;
-  }).join(' ');
-  return (
-    <svg width={width} height={height} style={{ flexShrink: 0 }}>
-      <polyline points={points} fill="none" stroke={color} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 function computeTotalCryptoValue(assets: Asset[], prices: Record<string, number>): number {
   return assets.reduce((sum, a) => sum + a.amount * assetPrice(a, prices), 0);
-}
-
-const SANKEY_COLORS = [
-  '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444',
-  '#ec4899', '#6366f1', '#14b8a6', '#f97316', '#84cc16',
-  '#a855f7', '#22d3ee', '#34d399', '#fbbf24', '#f87171',
-];
-
-function CashflowSankey({ data, width = 700, height = 360 }: { data: SankeyData; width?: number; height?: number }) {
-  if (data.links.length === 0) return <p style={{ color: '#64748b', fontSize: '0.85rem' }}>Geen cashflow data</p>;
-
-  // Map string IDs to numeric indices for d3-sankey
-  const nodeIndex = new Map(data.nodes.map((n, i) => [n.id, i]));
-  const sankeyData = {
-    nodes: data.nodes.map(n => ({ ...n })),
-    links: data.links.map(l => ({
-      source: nodeIndex.get(l.source) ?? 0,
-      target: nodeIndex.get(l.target) ?? 0,
-      value: l.value,
-    })),
-  };
-
-  const generator = d3Sankey<{ id: string; label: string }, { source: number; target: number; value: number }>()
-    .nodeId((_d, i) => i)
-    .nodeWidth(14)
-    .nodePadding(10)
-    .nodeAlign((node) => {
-      // Custom alignment: income sources = 0 (left), hub = 1 (center), expenses = 2 (right)
-      const n = data.nodes[(node as unknown as { index: number }).index ?? 0];
-      if (!n) return 1;
-      if (n.id.startsWith('in_')) return 0;
-      if (n.id === 'hub_income') return 1;
-      return 2;
-    })
-    .extent([[140, 8], [width - 140, height - 8]]);
-
-  const layout = generator(sankeyData as Parameters<typeof generator>[0]);
-  const pathGen = sankeyLinkHorizontal();
-
-  return (
-    <svg width={width} height={height} style={{ width: '100%', height: 'auto' }} viewBox={`0 0 ${width} ${height}`}>
-      {/* Links */}
-      {(layout.links ?? []).map((link, i) => {
-        const sourceNode = typeof link.source === 'object' ? link.source : null;
-        const color = SANKEY_COLORS[i % SANKEY_COLORS.length];
-        // Savings link gets green
-        const targetNode = typeof link.target === 'object' ? link.target : null;
-        const isGespaard = targetNode && 'id' in targetNode && (targetNode as { id: string }).id === 'out_savings';
-        return (
-          <path
-            key={i}
-            d={pathGen(link as Parameters<typeof pathGen>[0]) ?? ''}
-            fill="none"
-            stroke={isGespaard ? '#10b981' : color}
-            strokeOpacity={0.35}
-            strokeWidth={Math.max((link as { width?: number }).width ?? 1, 1)}
-          >
-            <title>
-              {sourceNode && 'label' in sourceNode ? (sourceNode as { label: string }).label : ''} → {targetNode && 'label' in targetNode ? (targetNode as { label: string }).label : ''}: {formatCurrency(link.value)}
-            </title>
-          </path>
-        );
-      })}
-      {/* Nodes */}
-      {(layout.nodes ?? []).map((node, i) => {
-        const x0 = (node as { x0?: number }).x0 ?? 0;
-        const x1 = (node as { x1?: number }).x1 ?? 0;
-        const y0 = (node as { y0?: number }).y0 ?? 0;
-        const y1 = (node as { y1?: number }).y1 ?? 0;
-        const n = node as { id?: string; label?: string };
-        const isHub = n.id === 'hub_income';
-        const isGespaard = n.id === 'out_savings';
-        const isIncome = n.id?.startsWith('in_');
-        const nodeColor = isGespaard ? '#10b981' : isHub ? '#8b5cf6' : isIncome ? '#06b6d4' : SANKEY_COLORS[i % SANKEY_COLORS.length];
-        const nodeHeight = y1 - y0;
-
-        return (
-          <g key={i}>
-            <rect
-              x={x0} y={y0} width={x1 - x0} height={nodeHeight}
-              fill={nodeColor} rx={2} opacity={0.85}
-            />
-            {nodeHeight > 12 && (
-              <text
-                x={isIncome ? x0 - 6 : x1 + 6}
-                y={(y0 + y1) / 2}
-                dy="0.35em"
-                textAnchor={isIncome ? 'end' : 'start'}
-                fill="#cbd5e1"
-                fontSize={10}
-                fontFamily="Inter, sans-serif"
-              >
-                {(n.label ?? '').length > 24 ? (n.label ?? '').slice(0, 22) + '…' : n.label}
-              </text>
-            )}
-          </g>
-        );
-      })}
-    </svg>
-  );
 }
 
 export default function Dashboard() {

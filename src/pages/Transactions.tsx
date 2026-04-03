@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { storage } from '../lib/storage';
 import { formatCurrency, formatDate } from '../lib/utils';
 import { CATEGORIES } from '../types';
@@ -259,18 +260,22 @@ function TransactionDetail({
 /* ── Main page ───────────────────────────────────────── */
 
 export default function Transactions() {
+  const [searchParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [filterAccount, setFilterAccount] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
   const [filterLabel, setFilterLabel] = useState('');
-  const [filterStart, setFilterStart] = useState('');
-  const [filterEnd, setFilterEnd] = useState('');
+  const [filterStart, setFilterStart] = useState(searchParams.get('start') ?? '');
+  const [filterEnd, setFilterEnd] = useState(searchParams.get('end') ?? '');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectedTxId, setSelectedTxId] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('date');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [, forceUpdate] = useState(0);
+
+  const [toast, setToast] = useState('');
+  const [visibleCount, setVisibleCount] = useState(100);
 
   // Bulk selection
   const [bulkMode, setBulkMode] = useState(false);
@@ -375,6 +380,14 @@ export default function Transactions() {
     forceUpdate(n => n + 1);
   }
 
+  function showToast(msg: string) {
+    setToast(msg);
+    setTimeout(() => setToast(''), 2500);
+  }
+
+  // Reset pagination when filters change
+  useMemo(() => { setVisibleCount(100); }, [search, filterAccount, filterCategory, filterLabel, filterStart, filterEnd, sortKey, sortDir]);
+
   // Bulk actions
   const bulkCount = selectedIds.size;
   const allFilteredSelected = filtered.length > 0 && filtered.every(tx => selectedIds.has(tx.id));
@@ -397,6 +410,7 @@ export default function Transactions() {
 
   function bulkSetCategory(category: string) {
     if (!category) return;
+    const count = selectedIds.size;
     const allTxs = storage.getTransactions().map(t =>
       selectedIds.has(t.id) ? { ...t, category } : t,
     );
@@ -404,11 +418,13 @@ export default function Transactions() {
     setSelectedIds(new Set());
     setBulkCategory('');
     forceUpdate(n => n + 1);
+    showToast(`${count} transacties → ${category}`);
   }
 
   function bulkAddLabel(label: string) {
     if (!label.trim()) return;
     const trimmed = label.trim();
+    const count = selectedIds.size;
     const allTxs = storage.getTransactions().map(t =>
       selectedIds.has(t.id) ? { ...t, labels: [...new Set([...(t.labels ?? []), trimmed])] } : t,
     );
@@ -416,18 +432,22 @@ export default function Transactions() {
     setSelectedIds(new Set());
     setBulkLabel('');
     forceUpdate(n => n + 1);
+    showToast(`Label "${trimmed}" toegevoegd aan ${count} transacties`);
   }
 
   function bulkSetInternal(isInternal: boolean) {
+    const count = selectedIds.size;
     const allTxs = storage.getTransactions().map(t =>
       selectedIds.has(t.id) ? { ...t, isInternal: isInternal || undefined } : t,
     );
     storage.setTransactions(allTxs);
     setSelectedIds(new Set());
     forceUpdate(n => n + 1);
+    showToast(`${count} transacties als intern gemarkeerd`);
   }
 
   function bulkSetNote(note: string) {
+    const count = selectedIds.size;
     const allTxs = storage.getTransactions().map(t =>
       selectedIds.has(t.id) ? { ...t, note: note || undefined } : t,
     );
@@ -435,6 +455,7 @@ export default function Transactions() {
     setSelectedIds(new Set());
     setBulkNote('');
     forceUpdate(n => n + 1);
+    showToast(`Notitie toegevoegd aan ${count} transacties`);
   }
 
   const accountName = (iban: string) => accounts.find(a => a.iban === iban)?.name ?? iban;
@@ -497,6 +518,8 @@ export default function Transactions() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      {toast && <div className="toast-success">✓ {toast}</div>}
+
       {/* Filters */}
       <div className="glass-card" style={{ padding: '1rem' }}>
         {/* Header row: count + mobile toggle */}
@@ -751,7 +774,7 @@ export default function Transactions() {
                   </td>
                 </tr>
               ) : (
-                filtered.map((tx, idx) => (
+                filtered.slice(0, visibleCount).map((tx, idx) => (
                   <tr
                     key={tx.id}
                     onClick={() => setSelectedTxId(tx.id)}
@@ -817,6 +840,17 @@ export default function Transactions() {
             </tbody>
           </table>
         </div>
+        {filtered.length > visibleCount && (
+          <div style={{ padding: '0.75rem', textAlign: 'center', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+            <button
+              className="glass-button"
+              style={{ padding: '0.5rem 2rem', fontSize: '0.8rem', fontFamily: 'inherit', color: '#94a3b8' }}
+              onClick={() => setVisibleCount(c => c + 100)}
+            >
+              Meer laden ({filtered.length - visibleCount} resterend)
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Mobile card list */}
@@ -826,7 +860,7 @@ export default function Transactions() {
             Geen transacties gevonden
           </div>
         ) : (
-          filtered.map(tx => (
+          filtered.slice(0, visibleCount).map(tx => (
             <div
               key={tx.id}
               className="glass-card"
@@ -874,6 +908,15 @@ export default function Transactions() {
               </div>
             </div>
           ))
+        )}
+        {filtered.length > visibleCount && (
+          <button
+            className="glass-card"
+            style={{ padding: '0.75rem', textAlign: 'center', fontSize: '0.8rem', color: '#94a3b8', cursor: 'pointer', fontFamily: 'inherit', border: '1px solid rgba(255,255,255,0.1)' }}
+            onClick={() => setVisibleCount(c => c + 100)}
+          >
+            Meer laden ({filtered.length - visibleCount} resterend)
+          </button>
         )}
       </div>
 

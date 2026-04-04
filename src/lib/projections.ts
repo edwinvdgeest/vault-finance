@@ -15,16 +15,25 @@ function percentile(sorted: number[], p: number): number {
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
 }
 
+/** A life phase with its own monthly contribution */
+export interface LifePhase {
+  id: string;
+  label: string;
+  fromYear: number; // offset from now (0 = now)
+  monthlyContribution: number;
+}
+
 export interface ProjectionParams {
   startCapital: number;
   monthlyContribution: number;
-  annualReturn: number;       // 0.07 = 7%
-  annualVolatility: number;   // 0.15 = 15%
-  inflationRate: number;      // 0.02 = 2%
+  annualReturn: number;
+  annualVolatility: number;
+  inflationRate: number;
   years: number;
   simulations: number;
   goalAmount: number;
   adjustForInflation: boolean;
+  phases?: LifePhase[]; // optional life phases override
 }
 
 export interface YearlyDataPoint {
@@ -35,6 +44,8 @@ export interface YearlyDataPoint {
   p50: number;
   p75: number;
   p90: number;
+  // For scenario comparison
+  [key: string]: number | string;
 }
 
 export interface ProjectionResult {
@@ -43,6 +54,18 @@ export interface ProjectionResult {
   p10Final: number;
   p90Final: number;
   probabilityAboveGoal: number;
+  fireYear: number | null; // year index when median hits FIRE number, or null
+}
+
+/** Get monthly contribution for a given year offset based on life phases */
+function getPhaseContribution(yearOffset: number, phases: LifePhase[], defaultContrib: number): number {
+  // Find the phase that applies (last phase whose fromYear <= yearOffset)
+  const sorted = phases.slice().sort((a, b) => a.fromYear - b.fromYear);
+  let contrib = defaultContrib;
+  for (const phase of sorted) {
+    if (yearOffset >= phase.fromYear) contrib = phase.monthlyContribution;
+  }
+  return contrib;
 }
 
 export function runProjection(params: ProjectionParams): ProjectionResult {
@@ -56,15 +79,15 @@ export function runProjection(params: ProjectionParams): ProjectionResult {
     simulations,
     goalAmount,
     adjustForInflation,
+    phases,
   } = params;
 
   const monthlyMu = annualReturn / 12;
   const monthlySigma = annualVolatility / Math.sqrt(12);
   const monthlyInflation = inflationRate / 12;
   const totalMonths = years * 12;
+  const hasPhases = phases && phases.length > 0;
 
-  // Run all simulations, store end-of-year values
-  // simEndValues[yearIndex][simIndex] = value
   const simEndValues: number[][] = Array.from({ length: years }, () => []);
   const finalValues: number[] = [];
 
@@ -72,33 +95,32 @@ export function runProjection(params: ProjectionParams): ProjectionResult {
     let value = startCapital;
 
     for (let m = 1; m <= totalMonths; m++) {
-      // Random monthly return
-      const monthReturn = monthlyMu + monthlySigma * randomNormal();
-      value = value * (1 + monthReturn) + monthlyContribution;
+      const yearOffset = Math.floor((m - 1) / 12);
+      const contrib = hasPhases
+        ? getPhaseContribution(yearOffset, phases!, monthlyContribution)
+        : monthlyContribution;
 
-      // Deflate for inflation if requested
+      const monthReturn = monthlyMu + monthlySigma * randomNormal();
+      value = value * (1 + monthReturn) + contrib;
+      if (value < 0) value = 0; // can't go below zero
+
       const deflated = adjustForInflation
         ? value / Math.pow(1 + monthlyInflation, m)
         : value;
 
-      // Record at end of each year
       if (m % 12 === 0) {
-        const yearIdx = (m / 12) - 1;
-        simEndValues[yearIdx].push(deflated);
+        simEndValues[(m / 12) - 1].push(deflated);
       }
     }
 
-    // Final value
     const finalDeflated = adjustForInflation
       ? value / Math.pow(1 + monthlyInflation, totalMonths)
       : value;
     finalValues.push(finalDeflated);
   }
 
-  // Calculate percentiles per year
   const currentYear = new Date().getFullYear();
   const yearlyData: YearlyDataPoint[] = [
-    // Year 0 = now
     { year: 0, label: String(currentYear), p10: startCapital, p25: startCapital, p50: startCapital, p75: startCapital, p90: startCapital },
   ];
 
@@ -115,9 +137,17 @@ export function runProjection(params: ProjectionParams): ProjectionResult {
     });
   }
 
-  // Final stats
   const sortedFinal = finalValues.slice().sort((a, b) => a - b);
   const aboveGoal = finalValues.filter(v => v >= goalAmount).length;
+
+  // FIRE calculation: find first year where median >= goalAmount (FIRE number)
+  let fireYear: number | null = null;
+  for (let i = 1; i < yearlyData.length; i++) {
+    if (yearlyData[i].p50 >= goalAmount) {
+      fireYear = i;
+      break;
+    }
+  }
 
   return {
     yearlyData,
@@ -125,5 +155,12 @@ export function runProjection(params: ProjectionParams): ProjectionResult {
     p10Final: Math.round(percentile(sortedFinal, 10)),
     p90Final: Math.round(percentile(sortedFinal, 90)),
     probabilityAboveGoal: Math.round((aboveGoal / simulations) * 1000) / 10,
+    fireYear,
   };
+}
+
+/** Run a lightweight projection returning only median line (for scenario comparison) */
+export function runScenarioMedian(params: ProjectionParams): number[] {
+  const result = runProjection({ ...params, simulations: 200 });
+  return result.yearlyData.map(d => d.p50);
 }

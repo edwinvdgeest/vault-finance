@@ -38,7 +38,6 @@ export default function CashflowSankey({ data, width = 700, height = 360 }: { da
   };
 
   const generator = d3Sankey<{ id: string; label: string }, { source: number; target: number; value: number }>()
-    .nodeId((_d, i) => i)
     .nodeWidth(14)
     .nodePadding(10)
     .nodeAlign((node) => {

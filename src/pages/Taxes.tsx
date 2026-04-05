@@ -149,9 +149,9 @@ export default function Taxes() {
                   />
                   <Tooltip
                     contentStyle={tooltipStyle}
-                    formatter={(value: number, name: string) => {
+                    formatter={(value, name) => {
                       const labels: Record<string, string> = { paid: 'Betaald', refunds: 'Teruggave', net: 'Netto' };
-                      return [formatCurrency(value), labels[name] ?? name];
+                      return [formatCurrency(Number(value)), labels[String(name)] ?? String(name)];
                     }}
                     cursor={{ fill: 'rgba(255,255,255,0.04)' }}
                   />
@@ -162,8 +162,8 @@ export default function Taxes() {
                     }}
                     wrapperStyle={{ fontSize: 12, color: '#94a3b8' }}
                   />
-                  <Bar dataKey="paid" fill="#ef4444" style={{ fill: '#ef4444' }} radius={[3, 3, 0, 0]} maxBarSize={50} onClick={(d) => d?.year && setSelectedYear(d.year)} cursor="pointer" />
-                  <Bar dataKey="refunds" fill="#10b981" style={{ fill: '#10b981' }} radius={[3, 3, 0, 0]} maxBarSize={50} onClick={(d) => d?.year && setSelectedYear(d.year)} cursor="pointer" />
+                  <Bar dataKey="paid" fill="#ef4444" style={{ fill: '#ef4444' }} radius={[3, 3, 0, 0]} maxBarSize={50} onClick={(d: unknown) => { const y = (d as { payload?: { year?: string } })?.payload?.year; if (y) setSelectedYear(y); }} cursor="pointer" />
+                  <Bar dataKey="refunds" fill="#10b981" style={{ fill: '#10b981' }} radius={[3, 3, 0, 0]} maxBarSize={50} onClick={(d: unknown) => { const y = (d as { payload?: { year?: string } })?.payload?.year; if (y) setSelectedYear(y); }} cursor="pointer" />
                 </BarChart>
               </ResponsiveContainer>
             </div>

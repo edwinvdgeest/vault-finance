@@ -55,6 +55,7 @@ export default function Settings() {
   const [newPattern, setNewPattern] = useState('');
   const [newCategory, setNewCategory] = useState<string>(CATEGORIES[0]);
   const [editingRule, setEditingRule] = useState<{ id: string; pattern: string; category: string } | null>(null);
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
 
   const [cryptoHoldings, setCryptoHoldings] = useState<CryptoEdit[]>(() =>
     storage.getAssets().map(assetToEdit),
@@ -594,88 +595,143 @@ export default function Settings() {
           </label>
         </div>
 
-        {/* Rules list */}
+        {/* Rules grouped by category */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
-          {rules.map(rule => {
-            const isEditing = editingRule?.id === rule.id;
-            return (
-              <div
-                key={rule.id}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  padding: '0.5rem 0.875rem',
-                  background: isEditing ? 'rgba(139,92,246,0.08)' : 'rgba(255,255,255,0.03)',
-                  border: isEditing ? '1px solid rgba(139,92,246,0.3)' : '1px solid rgba(255,255,255,0.07)',
-                  borderRadius: '0.5rem',
-                  transition: 'background 0.15s, border-color 0.15s',
-                }}
-              >
-                {isEditing ? (
-                  <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flex: 1, minWidth: 0 }}>
-                    <input
-                      autoFocus
-                      className="glass-input"
-                      style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', flex: 1, fontFamily: 'monospace' }}
-                      value={editingRule.pattern}
-                      onChange={e => setEditingRule({ ...editingRule, pattern: e.target.value })}
-                      onKeyDown={e => { if (e.key === 'Enter') commitEditRule(); if (e.key === 'Escape') setEditingRule(null); }}
-                    />
-                    <select
-                      className="glass-input"
-                      style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', minWidth: 130 }}
-                      value={editingRule.category}
-                      onChange={e => setEditingRule({ ...editingRule, category: e.target.value })}
-                    >
-                      {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                    <button
-                      onClick={commitEditRule}
-                      style={{ background: 'none', border: 'none', color: '#10b981', cursor: 'pointer', fontSize: '1rem', padding: '0.25rem', lineHeight: 1, fontWeight: 700 }}
-                      title="Opslaan"
-                    >
-                      ✓
-                    </button>
-                    <button
-                      onClick={() => setEditingRule(null)}
-                      style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1rem', padding: '0.25rem', lineHeight: 1 }}
-                      title="Annuleren"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <div
-                      style={{ display: 'flex', gap: '1rem', alignItems: 'center', flex: 1, minWidth: 0, cursor: 'pointer' }}
-                      onClick={() => startEditRule(rule)}
-                      title="Klik om te bewerken"
-                    >
-                      <code style={{ fontSize: '0.8rem', color: '#c4b5fd', background: 'rgba(139,92,246,0.1)', padding: '0.125rem 0.375rem', borderRadius: '0.25rem', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {rule.pattern}
-                      </code>
-                      <span style={{ fontSize: '0.8rem', color: '#94a3b8', whiteSpace: 'nowrap' }}>→ {rule.category}</span>
-                      {rule.isCustom && (
-                        <span style={{ fontSize: '0.7rem', color: '#06b6d4', background: 'rgba(6,182,212,0.1)', padding: '0.1rem 0.4rem', borderRadius: '0.75rem', border: '1px solid rgba(6,182,212,0.2)' }}>
-                          eigen
-                        </span>
-                      )}
+          {(() => {
+            // Group rules by category
+            const grouped = new Map<string, typeof rules>();
+            for (const rule of rules) {
+              if (!grouped.has(rule.category)) grouped.set(rule.category, []);
+              grouped.get(rule.category)!.push(rule);
+            }
+            // Auto-expand category containing the rule being edited
+            const editingCategory = editingRule
+              ? rules.find(r => r.id === editingRule.id)?.category
+              : null;
+            const sortedCategories = [...grouped.keys()].sort((a, b) => a.localeCompare(b, 'nl'));
+
+            return sortedCategories.map(category => {
+              const groupRules = grouped.get(category)!;
+              const isExpanded = expandedCategories.has(category) || editingCategory === category;
+              return (
+                <div key={category} style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                  {/* Category header */}
+                  <button
+                    onClick={() => {
+                      setExpandedCategories(prev => {
+                        const next = new Set(prev);
+                        if (next.has(category)) next.delete(category); else next.add(category);
+                        return next;
+                      });
+                    }}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      padding: '0.5rem 0.875rem',
+                      background: 'rgba(139,92,246,0.08)',
+                      border: '1px solid rgba(139,92,246,0.2)',
+                      borderRadius: '0.5rem',
+                      cursor: 'pointer', fontFamily: 'inherit',
+                      transition: 'background 0.15s',
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(139,92,246,0.12)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'rgba(139,92,246,0.08)')}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span style={{ fontSize: '0.7rem', color: '#c4b5fd', transition: 'transform 0.15s', display: 'inline-block', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+                      <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#e2e8f0' }}>{category}</span>
                     </div>
-                    <button
-                      onClick={() => deleteRule(rule.id)}
-                      style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1rem', padding: '0.25rem', lineHeight: 1, transition: 'color 0.15s' }}
-                      title="Verwijder regel"
-                      onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
-                      onMouseLeave={e => (e.currentTarget.style.color = '#64748b')}
-                    >
-                      ×
-                    </button>
-                  </>
-                )}
-              </div>
-            );
-          })}
+                    <span style={{ fontSize: '0.72rem', color: '#94a3b8', background: 'rgba(255,255,255,0.06)', padding: '0.1rem 0.5rem', borderRadius: '0.75rem' }}>
+                      {groupRules.length}
+                    </span>
+                  </button>
+                  {/* Rules within this category */}
+                  {isExpanded && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', paddingLeft: '1.25rem' }}>
+                      {groupRules.map(rule => {
+                        const isEditing = editingRule?.id === rule.id;
+                        return (
+                          <div
+                            key={rule.id}
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              padding: '0.4rem 0.75rem',
+                              background: isEditing ? 'rgba(139,92,246,0.08)' : 'rgba(255,255,255,0.03)',
+                              border: isEditing ? '1px solid rgba(139,92,246,0.3)' : '1px solid rgba(255,255,255,0.05)',
+                              borderRadius: '0.375rem',
+                              transition: 'background 0.15s, border-color 0.15s',
+                            }}
+                          >
+                            {isEditing ? (
+                              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flex: 1, minWidth: 0 }}>
+                                <input
+                                  autoFocus
+                                  className="glass-input"
+                                  style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', flex: 1, fontFamily: 'monospace' }}
+                                  value={editingRule.pattern}
+                                  onChange={e => setEditingRule({ ...editingRule, pattern: e.target.value })}
+                                  onKeyDown={e => { if (e.key === 'Enter') commitEditRule(); if (e.key === 'Escape') setEditingRule(null); }}
+                                />
+                                <select
+                                  className="glass-input"
+                                  style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', minWidth: 130 }}
+                                  value={editingRule.category}
+                                  onChange={e => setEditingRule({ ...editingRule, category: e.target.value })}
+                                >
+                                  {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                                </select>
+                                <button
+                                  onClick={commitEditRule}
+                                  style={{ background: 'none', border: 'none', color: '#10b981', cursor: 'pointer', fontSize: '1rem', padding: '0.25rem', lineHeight: 1, fontWeight: 700 }}
+                                  title="Opslaan"
+                                >
+                                  ✓
+                                </button>
+                                <button
+                                  onClick={() => setEditingRule(null)}
+                                  style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1rem', padding: '0.25rem', lineHeight: 1 }}
+                                  title="Annuleren"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ) : (
+                              <>
+                                <div
+                                  style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flex: 1, minWidth: 0, cursor: 'pointer' }}
+                                  onClick={() => startEditRule(rule)}
+                                  title="Klik om te bewerken"
+                                >
+                                  <code style={{ fontSize: '0.78rem', color: '#c4b5fd', background: 'rgba(139,92,246,0.1)', padding: '0.125rem 0.375rem', borderRadius: '0.25rem', maxWidth: 340, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {rule.pattern}
+                                  </code>
+                                  {rule.isCustom && (
+                                    <span style={{ fontSize: '0.7rem', color: '#06b6d4', background: 'rgba(6,182,212,0.1)', padding: '0.1rem 0.4rem', borderRadius: '0.75rem', border: '1px solid rgba(6,182,212,0.2)' }}>
+                                      eigen
+                                    </span>
+                                  )}
+                                </div>
+                                <button
+                                  onClick={() => deleteRule(rule.id)}
+                                  style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1rem', padding: '0.25rem', lineHeight: 1, transition: 'color 0.15s' }}
+                                  title="Verwijder regel"
+                                  onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
+                                  onMouseLeave={e => (e.currentTarget.style.color = '#64748b')}
+                                >
+                                  ×
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            });
+          })()}
         </div>
       </div>
 

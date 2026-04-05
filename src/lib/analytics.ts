@@ -47,6 +47,54 @@ export function getMonthlyNetWorthTrend(
   return months;
 }
 
+export type TrendGranularity = 'daily' | 'weekly' | 'monthly';
+
+export function getNetWorthTrend(
+  accounts: Account[],
+  transactions: Transaction[],
+  cryptoValue: number,
+  start: Date,
+  end: Date,
+  granularity: TrendGranularity,
+): { label: string; netWorth: number; date: string }[] {
+  if (accounts.length === 0 && transactions.length === 0) return [];
+
+  const points: { label: string; netWorth: number; date: string }[] = [];
+  const cur = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+
+  // Determine step
+  const stepDays = granularity === 'daily' ? 1 : granularity === 'weekly' ? 7 : 30;
+
+  while (cur <= end) {
+    const pointDate = granularity === 'monthly'
+      ? endOfMonth(cur)
+      : new Date(cur);
+    const asOf = pointDate > end ? end : pointDate;
+    const nw = getNetWorth(accounts, transactions, cryptoValue, asOf);
+
+    const label = granularity === 'monthly'
+      ? asOf.toLocaleDateString('nl-NL', { month: 'short' })
+      : granularity === 'weekly'
+      ? `${asOf.getDate()}/${asOf.getMonth() + 1}`
+      : `${asOf.getDate()}/${asOf.getMonth() + 1}`;
+
+    points.push({
+      label,
+      netWorth: Math.round(nw * 100) / 100,
+      date: asOf.toISOString().slice(0, 10),
+    });
+
+    if (granularity === 'monthly') {
+      cur.setMonth(cur.getMonth() + 1);
+      cur.setDate(1);
+    } else {
+      cur.setDate(cur.getDate() + stepDays);
+    }
+  }
+
+  return points;
+}
+
 export function getMonthlyIncomeExpense(
   transactions: Transaction[],
   start: Date,
@@ -135,6 +183,41 @@ export function getPeriodSummary(
     expenses: Math.round(expenses * 100) / 100,
     cashflow: Math.round(cashflow * 100) / 100,
     savingsRate: Math.round(savingsRate * 10) / 10,
+  };
+}
+
+/** Calculate percentage delta between current and previous value, null if no prior data */
+function pctDelta(current: number, previous: number): number | null {
+  if (previous === 0) return null;
+  return Math.round(((current - previous) / Math.abs(previous)) * 1000) / 10;
+}
+
+export function getPeriodSummaryWithDelta(
+  allTransactions: Transaction[],
+  start: Date,
+  end: Date,
+): {
+  income: number; expenses: number; cashflow: number; savingsRate: number;
+  deltaIncome: number | null; deltaExpenses: number | null; deltaCashflow: number | null;
+  hasPriorData: boolean;
+} {
+  const current = getPeriodSummary(filterByPeriod(allTransactions, start, end));
+
+  // Same period one year ago
+  const priorStart = new Date(start);
+  priorStart.setFullYear(priorStart.getFullYear() - 1);
+  const priorEnd = new Date(end);
+  priorEnd.setFullYear(priorEnd.getFullYear() - 1);
+  const prior = getPeriodSummary(filterByPeriod(allTransactions, priorStart, priorEnd));
+
+  const hasPriorData = prior.income > 0 || prior.expenses > 0;
+
+  return {
+    ...current,
+    deltaIncome: hasPriorData ? pctDelta(current.income, prior.income) : null,
+    deltaExpenses: hasPriorData ? pctDelta(current.expenses, prior.expenses) : null,
+    deltaCashflow: hasPriorData ? pctDelta(current.cashflow, prior.cashflow) : null,
+    hasPriorData,
   };
 }
 

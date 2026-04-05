@@ -261,10 +261,10 @@ function TransactionDetail({
 
 export default function Transactions() {
   const [searchParams] = useSearchParams();
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(searchParams.get('search') ?? '');
   const [filterAccount, setFilterAccount] = useState('');
-  const [filterCategory, setFilterCategory] = useState('');
-  const [filterLabel, setFilterLabel] = useState('');
+  const [filterCategory, setFilterCategory] = useState(searchParams.get('category') ?? '');
+  const [filterLabel, setFilterLabel] = useState(searchParams.get('label') ?? '');
   const [filterStart, setFilterStart] = useState(searchParams.get('start') ?? '');
   const [filterEnd, setFilterEnd] = useState(searchParams.get('end') ?? '');
   const [editingId, setEditingId] = useState<string | null>(null);

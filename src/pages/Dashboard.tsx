@@ -19,6 +19,7 @@ import { storage } from '../lib/storage';
 import {
   getNetWorth,
   getMonthlyNetWorthTrend,
+  getNetWorthTrend,
   getMonthlyIncomeExpense,
   getCategorySpending,
   getAccountBreakdown,
@@ -26,6 +27,7 @@ import {
   getLastMonthEnd,
   filterByPeriod,
   getPeriodSummary,
+  getPeriodSummaryWithDelta,
   getRecurringExpenses,
   getCategoryTrend,
   getLabelSpending,
@@ -101,6 +103,7 @@ export default function Dashboard() {
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [cryptoPrices, setCryptoPrices] = useState<Record<string, number>>({});
+  const [cryptoHistory, setCryptoHistory] = useState<Record<string, number[]>>({});
 
   const transactions = storage.getTransactions();
   const accounts = storage.getAccounts();
@@ -116,12 +119,16 @@ export default function Dashboard() {
   const netWorthDelta = currentNetWorth - lastMonthNetWorth;
   const netWorthDeltaPct = lastMonthNetWorth !== 0 ? (netWorthDelta / Math.abs(lastMonthNetWorth)) * 100 : 0;
 
-  const trendData = getMonthlyNetWorthTrend(accounts, transactions, totalCryptoValue);
+  // Net worth trend granularity based on selected period
+  const granularity = period === 'this-month' || period === 'last-month'
+    ? 'daily' as const
+    : period === 'quarter' ? 'weekly' as const : 'monthly' as const;
+  const trendData = getNetWorthTrend(accounts, transactions, totalCryptoValue, start, end, granularity);
   const incomeExpenseData = getMonthlyIncomeExpense(periodTxs, start, end);
   const categoryData = getCategorySpending(periodTxs);
   const accountData = getAccountBreakdown(accounts, transactions);
   const top5 = getTopExpenses(periodTxs);
-  const periodSummary = getPeriodSummary(periodTxs);
+  const periodSummary = getPeriodSummaryWithDelta(transactions, start, end);
   const recurring = getRecurringExpenses(transactions);
   const categoryTrends = getCategoryTrend(transactions);
   const labelSpending = getLabelSpending(periodTxs);
@@ -129,6 +136,14 @@ export default function Dashboard() {
   const budgetProgress = getBudgetProgress(periodTxs, budgets, start, end);
   const topMerchants = getTopMerchants(periodTxs);
   const cashflowSankey = getCashflowSankey(periodTxs);
+
+  // Helper for navigating to transactions with period filter
+  const periodStartStr = start.toISOString().slice(0, 10);
+  const periodEndStr = end.toISOString().slice(0, 10);
+  const navWithPeriod = (extra: Record<string, string>) => {
+    const params = new URLSearchParams({ start: periodStartStr, end: periodEndStr, ...extra });
+    navigate(`/transactions?${params.toString()}`);
+  };
 
   useEffect(() => {
     fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${COINGECKO_IDS}&vs_currencies=eur`)
@@ -151,6 +166,49 @@ export default function Dashboard() {
       })
       .catch(() => {});
   }, []);
+
+  // Fetch historical prices for sparklines (cached in localStorage, 24h TTL)
+  useEffect(() => {
+    if (assets.length === 0) return;
+    const CACHE_KEY = 'vault_crypto_history';
+    const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+    const cached = localStorage.getItem(CACHE_KEY);
+    if (cached) {
+      try {
+        const { ts, data } = JSON.parse(cached);
+        if (Date.now() - ts < CACHE_TTL) {
+          setCryptoHistory(data);
+          return;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    const fetchAll = async () => {
+      const history: Record<string, number[]> = {};
+      for (const asset of assets) {
+        try {
+          const res = await fetch(
+            `https://api.coingecko.com/api/v3/coins/${asset.type}/market_chart?vs_currency=eur&days=180&interval=daily`,
+          );
+          if (!res.ok) continue;
+          const json = await res.json();
+          // Sample ~30 points from the ~180 daily prices for a clean sparkline
+          const prices: [number, number][] = json.prices ?? [];
+          const step = Math.max(1, Math.floor(prices.length / 30));
+          const sampled: number[] = [];
+          for (let i = 0; i < prices.length; i += step) sampled.push(prices[i][1]);
+          history[asset.type] = sampled;
+        } catch {
+          // ignore, continue
+        }
+      }
+      setCryptoHistory(history);
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data: history }));
+    };
+    fetchAll();
+  }, [assets.length]);
 
   const isEmpty = accounts.length === 0 && transactions.length === 0 && assets.length === 0;
 
@@ -264,16 +322,26 @@ export default function Dashboard() {
           <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#10b981' }}>
             {formatCurrency(periodSummary.income)}
           </div>
+          {periodSummary.deltaIncome != null && (
+            <div style={{ fontSize: '0.7rem', color: periodSummary.deltaIncome >= 0 ? '#10b981' : '#ef4444', marginTop: '0.25rem' }}>
+              {periodSummary.deltaIncome >= 0 ? '↑' : '↓'} {Math.abs(periodSummary.deltaIncome)}% t.o.v. vorig jaar
+            </div>
+          )}
         </GlassCard>
         <GlassCard>
           <SectionTitle>Uitgaven</SectionTitle>
           <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#ef4444' }}>
             {formatCurrency(periodSummary.expenses)}
           </div>
+          {periodSummary.deltaExpenses != null && (
+            <div style={{ fontSize: '0.7rem', color: periodSummary.deltaExpenses <= 0 ? '#10b981' : '#ef4444', marginTop: '0.25rem' }}>
+              {periodSummary.deltaExpenses >= 0 ? '↑' : '↓'} {Math.abs(periodSummary.deltaExpenses)}% t.o.v. vorig jaar
+            </div>
+          )}
         </GlassCard>
         <GlassCard>
           <SectionTitle>Cashflow</SectionTitle>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '1.5rem', fontWeight: 700, color: periodSummary.cashflow >= 0 ? '#10b981' : '#ef4444' }}>
               {periodSummary.cashflow >= 0 ? '+' : ''}{formatCurrency(periodSummary.cashflow)}
             </span>
@@ -288,6 +356,11 @@ export default function Dashboard() {
               </span>
             )}
           </div>
+          {periodSummary.deltaCashflow != null && (
+            <div style={{ fontSize: '0.7rem', color: periodSummary.deltaCashflow >= 0 ? '#10b981' : '#ef4444', marginTop: '0.25rem' }}>
+              {periodSummary.deltaCashflow >= 0 ? '↑' : '↓'} {Math.abs(periodSummary.deltaCashflow)}% t.o.v. vorig jaar
+            </div>
+          )}
         </GlassCard>
       </div>
 
@@ -301,17 +374,18 @@ export default function Dashboard() {
             </span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
-            {assets.map(asset => {
+            {assets.map((asset, assetIdx) => {
               const price = assetPrice(asset, cryptoPrices);
               const value = asset.amount * price;
               const sym = assetSymbol(asset);
               const nm = assetName(asset);
+              const history = cryptoHistory[asset.type];
               return (
                 <div
                   key={asset.type}
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: '3rem 1fr auto auto',
+                    gridTemplateColumns: '3rem 1fr 60px auto auto',
                     gap: '0.75rem',
                     alignItems: 'center',
                     padding: '0.5rem 0.75rem',
@@ -338,6 +412,11 @@ export default function Dashboard() {
                       {asset.amount.toLocaleString('nl-NL', { maximumSignificantDigits: 8 })} × {price > 0 ? formatCurrency(price) : '—'}
                     </span>
                   </div>
+                  <div>
+                    {history && history.length > 1
+                      ? <MiniSparkline data={history} color={PIE_COLORS[assetIdx % PIE_COLORS.length]} />
+                      : null}
+                  </div>
                   <span style={{
                     fontSize: '0.85rem',
                     fontWeight: 600,
@@ -346,7 +425,7 @@ export default function Dashboard() {
                   }}>
                     {formatCurrency(value)}
                   </span>
-                  {asset.purchasePrice != null && asset.purchasePrice > 0 && price > 0 && (
+                  {asset.purchasePrice != null && asset.purchasePrice > 0 && price > 0 ? (
                     <span style={{
                       fontSize: '0.72rem',
                       color: price >= asset.purchasePrice ? '#10b981' : '#ef4444',
@@ -354,7 +433,7 @@ export default function Dashboard() {
                     }}>
                       {price >= asset.purchasePrice ? '+' : ''}{(((price - asset.purchasePrice) / asset.purchasePrice) * 100).toFixed(1)}%
                     </span>
-                  )}
+                  ) : <span />}
                 </div>
               );
             })}
@@ -365,7 +444,7 @@ export default function Dashboard() {
       {/* Charts row 1: Net worth trend + Account breakdown */}
       <div className="grid-main">
         <GlassCard>
-          <SectionTitle>Vermogensontwikkeling (12 maanden)</SectionTitle>
+          <SectionTitle>Vermogensontwikkeling — {periodLabel || 'periode'}</SectionTitle>
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={trendData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
               <defs>
@@ -540,7 +619,13 @@ export default function Dashboard() {
               const color = b.percentage > 100 ? '#ef4444' : b.percentage > 80 ? '#f59e0b' : '#10b981';
               const barWidth = Math.min(b.percentage, 100);
               return (
-                <div key={b.category}>
+                <div
+                  key={b.category}
+                  onClick={() => navWithPeriod({ category: b.category })}
+                  style={{ cursor: 'pointer', padding: '0.25rem 0.4rem', margin: '-0.25rem -0.4rem', borderRadius: '0.375rem', transition: 'background 0.15s' }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.03)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '0.25rem' }}>
                     <span style={{ fontSize: '0.8rem', color: '#cbd5e1' }}>{b.category}</span>
                     <span style={{ fontSize: '0.75rem', color }}>
@@ -566,9 +651,12 @@ export default function Dashboard() {
             {topMerchants.map((m, i) => (
               <div
                 key={m.name}
+                onClick={() => navWithPeriod({ search: m.name })}
+                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.03)')}
                 style={{
                   display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem',
-                  padding: '0.4rem 0.625rem',
+                  padding: '0.4rem 0.625rem', cursor: 'pointer', transition: 'background 0.15s',
                   background: 'rgba(255,255,255,0.03)', borderRadius: '0.375rem',
                   border: '1px solid rgba(255,255,255,0.05)',
                 }}
@@ -669,12 +757,16 @@ export default function Dashboard() {
               {labelSpending.map(ls => (
                 <div
                   key={ls.label}
+                  onClick={() => navWithPeriod({ label: ls.label })}
                   style={{
                     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                     padding: '0.4rem 0.625rem',
                     background: 'rgba(255,255,255,0.03)', borderRadius: '0.375rem',
                     border: '1px solid rgba(255,255,255,0.05)',
+                    cursor: 'pointer', transition: 'background 0.15s',
                   }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.03)')}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                     <span style={{

@@ -59,18 +59,26 @@ export function getPeriodDates(
       return { start: startOfMonth(ref), end: endOfMonth(ref), label };
     }
     case 'quarter': {
-      const endRef = addMonths(now, offset * 3);
-      const startRef = addMonths(startOfMonth(endRef), -2);
-      const e = offset === 0 ? now : endOfMonth(endRef);
-      const label = `${startRef.toLocaleDateString('nl-NL', { month: 'short' })} – ${e.toLocaleDateString('nl-NL', { month: 'short', year: 'numeric' })}`;
-      return { start: startRef, end: e, label };
+      // Calendar-aligned: Q1 = Jan-Mar, Q2 = Apr-Jun, Q3 = Jul-Sep, Q4 = Oct-Dec
+      const currentQ = Math.floor(now.getMonth() / 3);
+      const totalQ = currentQ + offset;
+      const qYear = now.getFullYear() + Math.floor(totalQ / 4);
+      const qNum = ((totalQ % 4) + 4) % 4; // positive modulo
+      const startMonth = qNum * 3;
+      const s = new Date(qYear, startMonth, 1);
+      const lastDayOfQuarter = new Date(qYear, startMonth + 3, 0, 23, 59, 59);
+      const e = offset === 0 && now < lastDayOfQuarter ? now : lastDayOfQuarter;
+      const label = `Q${qNum + 1} ${qYear}`;
+      return { start: s, end: e, label };
     }
     case 'year': {
-      const endRef = addMonths(now, offset * 12);
-      const startRef = addMonths(startOfMonth(endRef), -11);
-      const e = offset === 0 ? now : endOfMonth(endRef);
-      const label = `${startRef.toLocaleDateString('nl-NL', { month: 'short', year: 'numeric' })} – ${e.toLocaleDateString('nl-NL', { month: 'short', year: 'numeric' })}`;
-      return { start: startRef, end: e, label };
+      // Calendar year: Jan 1 - Dec 31
+      const yr = now.getFullYear() + offset;
+      const s = new Date(yr, 0, 1);
+      const lastDayOfYear = new Date(yr, 11, 31, 23, 59, 59);
+      const e = offset === 0 && now < lastDayOfYear ? now : lastDayOfYear;
+      const label = String(yr);
+      return { start: s, end: e, label };
     }
     case 'custom':
       return {
@@ -79,6 +87,15 @@ export function getPeriodDates(
         label: '',
       };
   }
+}
+
+/** Shift a period back by N years (for YoY comparison) */
+export function shiftPeriodByYear(start: Date, end: Date, years: number): { start: Date; end: Date } {
+  const s = new Date(start);
+  const e = new Date(end);
+  s.setFullYear(s.getFullYear() + years);
+  e.setFullYear(e.getFullYear() + years);
+  return { start: s, end: e };
 }
 
 export function deduplicate<T extends { date: string; amount: number; name: string }>(

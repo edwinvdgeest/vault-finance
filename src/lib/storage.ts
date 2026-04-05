@@ -181,6 +181,32 @@ export const storage = {
     localStorage.setItem('vault_budgets', JSON.stringify(budgets));
   },
 
+  /** Clear all transactions and accounts (keeps rules, assets, budgets) */
+  clearTransactionsAndAccounts: () => {
+    _transactions = [];
+    _accounts = [];
+    apiPut('/transactions', []).catch(console.error);
+    apiPost('/accounts', []).catch(console.error);
+    localStorage.setItem('vault_transactions', JSON.stringify([]));
+    localStorage.setItem('vault_accounts', JSON.stringify([]));
+  },
+
+  /** Clear all data except rules (transactions, accounts, assets, budgets) */
+  clearAllData: () => {
+    _transactions = [];
+    _accounts = [];
+    _assets = [];
+    _budgets = [];
+    apiPut('/transactions', []).catch(console.error);
+    apiPost('/accounts', []).catch(console.error);
+    apiPost('/assets', []).catch(console.error);
+    apiPost('/budgets', []).catch(console.error);
+    localStorage.setItem('vault_transactions', JSON.stringify([]));
+    localStorage.setItem('vault_accounts', JSON.stringify([]));
+    localStorage.setItem('vault_assets', JSON.stringify([]));
+    localStorage.setItem('vault_budgets', JSON.stringify([]));
+  },
+
   /** Re-detect internal transfers based on current accounts */
   refreshInternalFlags: () => {
     const updated = detectInternalTransfers(_transactions, _accounts);

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useMemo } from 'react';
 import { parseBunqCsv } from '../lib/parsers/bunq';
 import { parseTriodosCsv } from '../lib/parsers/triodos';
 import { parseAbnTxt } from '../lib/parsers/abn';
@@ -6,6 +6,18 @@ import { storage } from '../lib/storage';
 import { deduplicate, formatCurrency, formatDate } from '../lib/utils';
 import { getDefaultRulesWithIds } from '../lib/categorizer';
 import type { Transaction, BankType } from '../types';
+
+const BANK_LABELS: Record<string, string> = {
+  bunq: 'bunq',
+  triodos: 'Triodos',
+  abn: 'ABN AMRO',
+};
+
+function daysSince(dateStr: string): number {
+  const then = new Date(dateStr + 'T00:00:00').getTime();
+  const now = Date.now();
+  return Math.floor((now - then) / (24 * 60 * 60 * 1000));
+}
 
 export default function Import() {
   const [bank, setBank] = useState<BankType>('bunq');
@@ -17,7 +29,34 @@ export default function Import() {
   const [accountName, setAccountName] = useState('');
   const [imported, setImported] = useState<{ count: number; dupes: number } | null>(null);
   const [error, setError] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Per-account import status (derived from transactions)
+  const accountStatus = useMemo(() => {
+    const accounts = storage.getAccounts();
+    const txs = storage.getTransactions();
+    const txsByIban = new Map<string, Transaction[]>();
+    for (const tx of txs) {
+      if (!txsByIban.has(tx.account)) txsByIban.set(tx.account, []);
+      txsByIban.get(tx.account)!.push(tx);
+    }
+    return accounts.map(acc => {
+      const accTxs = txsByIban.get(acc.iban) ?? [];
+      const dates = accTxs.map(t => t.date).sort();
+      const lastDate = dates[dates.length - 1] ?? null;
+      const firstDate = dates[0] ?? null;
+      const daysOld = lastDate ? daysSince(lastDate) : null;
+      return {
+        ...acc,
+        lastDate,
+        firstDate,
+        count: accTxs.length,
+        daysOld,
+      };
+    });
+  }, [refreshKey]);
 
   function parseFile(text: string) {
     const rules = storage.getRules().length > 0 ? storage.getRules() : getDefaultRulesWithIds();
@@ -89,12 +128,76 @@ export default function Import() {
     setAllParsed([]);
     setPreview([]);
     setFileName('');
+    setRefreshKey(k => k + 1);
     void rules;
     void text;
   }
 
+  function handleClearAll() {
+    storage.clearTransactionsAndAccounts();
+    setShowClearConfirm(false);
+    setRefreshKey(k => k + 1);
+    setImported(null);
+    setError('');
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', maxWidth: 800 }}>
+      {/* Per-account import status */}
+      {accountStatus.length > 0 && (
+        <div className="glass-card">
+          <p style={{ fontSize: '0.75rem', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.875rem' }}>
+            Import status per rekening
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            {accountStatus.map(acc => {
+              const isStale = acc.daysOld !== null && acc.daysOld > 30;
+              const isMissing = acc.lastDate === null;
+              const statusColor = isMissing ? '#ef4444' : isStale ? '#f59e0b' : '#10b981';
+              const statusBg = isMissing ? 'rgba(239,68,68,0.08)' : isStale ? 'rgba(245,158,11,0.08)' : 'rgba(16,185,129,0.06)';
+              return (
+                <div
+                  key={acc.id}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '0.75rem',
+                    padding: '0.625rem 0.875rem',
+                    background: statusBg,
+                    border: `1px solid ${statusColor}33`,
+                    borderRadius: '0.5rem',
+                  }}
+                >
+                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: statusColor, flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'baseline', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.875rem', fontWeight: 500, color: '#e2e8f0' }}>{acc.name}</span>
+                      <span style={{ fontSize: '0.7rem', color: '#7dd3fc', background: 'rgba(14,165,233,0.12)', padding: '0.1rem 0.4rem', borderRadius: '0.25rem' }}>
+                        {BANK_LABELS[acc.bank] ?? acc.bank}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '0.15rem' }}>
+                      {isMissing ? (
+                        <span>Nog geen transacties</span>
+                      ) : (
+                        <>
+                          Laatste transactie: <span style={{ color: statusColor }}>{formatDate(acc.lastDate!)}</span>
+                          {' · '}{acc.count} transacties
+                          {' · '}{acc.daysOld === 0 ? 'vandaag' : acc.daysOld === 1 ? 'gisteren' : `${acc.daysOld} dagen geleden`}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  {isStale && !isMissing && (
+                    <span title="Import is gedateerd" style={{ fontSize: '0.68rem', fontWeight: 600, color: '#f59e0b', background: 'rgba(245,158,11,0.15)', padding: '0.2rem 0.5rem', borderRadius: '0.375rem', whiteSpace: 'nowrap' }}>
+                      ⚠ update nodig
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="glass-card">
         <p style={{ fontSize: '0.75rem', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '1rem' }}>
           Bank & Instellingen
@@ -259,6 +362,49 @@ export default function Import() {
           </div>
         </div>
       )}
+
+      {/* Clear data — danger zone */}
+      <div className="glass-card" style={{ borderColor: 'rgba(239,68,68,0.2)' }}>
+        <p style={{ fontSize: '0.75rem', fontWeight: 600, color: '#fca5a5', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.5rem' }}>
+          Leeg starten
+        </p>
+        <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: 0, marginBottom: '0.875rem' }}>
+          Verwijder alle transacties en rekeningen om opnieuw te beginnen. Categorieregels blijven bewaard.
+        </p>
+        {!showClearConfirm ? (
+          <button
+            onClick={() => setShowClearConfirm(true)}
+            className="glass-button"
+            style={{
+              fontFamily: 'inherit', padding: '0.5rem 1rem', fontSize: '0.85rem', fontWeight: 600,
+              background: 'rgba(239,68,68,0.12)', borderColor: 'rgba(239,68,68,0.35)', color: '#fca5a5',
+            }}
+          >
+            Alle transacties en rekeningen wissen
+          </button>
+        ) : (
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.85rem', color: '#fca5a5', fontWeight: 600 }}>Weet je het zeker?</span>
+            <button
+              onClick={handleClearAll}
+              className="glass-button"
+              style={{
+                fontFamily: 'inherit', padding: '0.4rem 0.875rem', fontSize: '0.8rem', fontWeight: 600,
+                background: 'rgba(239,68,68,0.25)', borderColor: 'rgba(239,68,68,0.5)', color: '#fff',
+              }}
+            >
+              Ja, wis alles
+            </button>
+            <button
+              onClick={() => setShowClearConfirm(false)}
+              className="glass-button"
+              style={{ fontFamily: 'inherit', padding: '0.4rem 0.875rem', fontSize: '0.8rem', color: '#94a3b8' }}
+            >
+              Annuleren
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

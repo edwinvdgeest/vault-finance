@@ -93,37 +93,43 @@ export interface RuleConflict {
   sharedTerm: string;
 }
 
-/** Find rule conflicts: rules in different categories that share a literal term */
+/** Find rule conflicts: rules in different categories where one's regex matches a literal term of the other */
 export function getRuleConflicts(rules: Rule[]): Map<string, RuleConflict[]> {
   const result = new Map<string, RuleConflict[]>();
-  const ruleTerms = rules.map(r => ({ rule: r, terms: extractTerms(r.pattern) }));
+  const compiled = rules.map(r => {
+    let regex: RegExp | null = null;
+    try { regex = new RegExp(r.pattern, 'i'); } catch { /* ignore invalid regex */ }
+    return { rule: r, terms: extractTerms(r.pattern), regex };
+  });
 
-  for (let i = 0; i < ruleTerms.length; i++) {
-    for (let j = i + 1; j < ruleTerms.length; j++) {
-      const a = ruleTerms[i];
-      const b = ruleTerms[j];
+  for (let i = 0; i < compiled.length; i++) {
+    for (let j = i + 1; j < compiled.length; j++) {
+      const a = compiled[i];
+      const b = compiled[j];
       if (a.rule.category === b.rule.category) continue;
 
-      // Find any shared term (exact or substring overlap with length >= 3)
-      for (const termA of a.terms) {
+      // Check if a's regex matches any of b's terms, OR b's regex matches any of a's terms
+      let shared: string | null = null;
+      if (a.regex) {
         for (const termB of b.terms) {
-          const la = termA.toLowerCase();
-          const lb = termB.toLowerCase();
-          if (la === lb || (la.length >= 3 && lb.includes(la)) || (lb.length >= 3 && la.includes(lb))) {
-            const shared = la.length <= lb.length ? termA : termB;
-            // Add to both rules
-            if (!result.has(a.rule.id)) result.set(a.rule.id, []);
-            result.get(a.rule.id)!.push({
-              ruleId: a.rule.id, otherRuleId: b.rule.id, otherCategory: b.rule.category, sharedTerm: shared,
-            });
-            if (!result.has(b.rule.id)) result.set(b.rule.id, []);
-            result.get(b.rule.id)!.push({
-              ruleId: b.rule.id, otherRuleId: a.rule.id, otherCategory: a.rule.category, sharedTerm: shared,
-            });
-            break; // one conflict per pair is enough
-          }
+          if (a.regex.test(termB)) { shared = termB; break; }
         }
-        if (result.get(a.rule.id)?.some(c => c.otherRuleId === b.rule.id)) break;
+      }
+      if (!shared && b.regex) {
+        for (const termA of a.terms) {
+          if (b.regex.test(termA)) { shared = termA; break; }
+        }
+      }
+
+      if (shared) {
+        if (!result.has(a.rule.id)) result.set(a.rule.id, []);
+        result.get(a.rule.id)!.push({
+          ruleId: a.rule.id, otherRuleId: b.rule.id, otherCategory: b.rule.category, sharedTerm: shared,
+        });
+        if (!result.has(b.rule.id)) result.set(b.rule.id, []);
+        result.get(b.rule.id)!.push({
+          ruleId: b.rule.id, otherRuleId: a.rule.id, otherCategory: a.rule.category, sharedTerm: shared,
+        });
       }
     }
   }

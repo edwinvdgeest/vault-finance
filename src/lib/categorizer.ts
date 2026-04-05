@@ -72,6 +72,64 @@ export function getDefaultRulesWithIds(): Rule[] {
   return DEFAULT_RULES.map((r, i) => ({ ...r, id: `default-${i}` }));
 }
 
+/** Extract literal terms from a regex pattern (splits on `|`, strips `\b` and escape chars) */
+function extractTerms(pattern: string): string[] {
+  return pattern
+    .split('|')
+    .map(t => t.trim())
+    // Strip word-boundary markers
+    .map(t => t.replace(/\\b/g, ''))
+    // Strip regex-escape backslashes (e.g. \. → .)
+    .map(t => t.replace(/\\(.)/g, '$1'))
+    // Strip common regex meta chars used in patterns
+    .map(t => t.replace(/\.\*/g, ' ').trim())
+    .filter(t => t.length >= 3);
+}
+
+export interface RuleConflict {
+  ruleId: string;
+  otherRuleId: string;
+  otherCategory: string;
+  sharedTerm: string;
+}
+
+/** Find rule conflicts: rules in different categories that share a literal term */
+export function getRuleConflicts(rules: Rule[]): Map<string, RuleConflict[]> {
+  const result = new Map<string, RuleConflict[]>();
+  const ruleTerms = rules.map(r => ({ rule: r, terms: extractTerms(r.pattern) }));
+
+  for (let i = 0; i < ruleTerms.length; i++) {
+    for (let j = i + 1; j < ruleTerms.length; j++) {
+      const a = ruleTerms[i];
+      const b = ruleTerms[j];
+      if (a.rule.category === b.rule.category) continue;
+
+      // Find any shared term (exact or substring overlap with length >= 3)
+      for (const termA of a.terms) {
+        for (const termB of b.terms) {
+          const la = termA.toLowerCase();
+          const lb = termB.toLowerCase();
+          if (la === lb || (la.length >= 3 && lb.includes(la)) || (lb.length >= 3 && la.includes(lb))) {
+            const shared = la.length <= lb.length ? termA : termB;
+            // Add to both rules
+            if (!result.has(a.rule.id)) result.set(a.rule.id, []);
+            result.get(a.rule.id)!.push({
+              ruleId: a.rule.id, otherRuleId: b.rule.id, otherCategory: b.rule.category, sharedTerm: shared,
+            });
+            if (!result.has(b.rule.id)) result.set(b.rule.id, []);
+            result.get(b.rule.id)!.push({
+              ruleId: b.rule.id, otherRuleId: a.rule.id, otherCategory: a.rule.category, sharedTerm: shared,
+            });
+            break; // one conflict per pair is enough
+          }
+        }
+        if (result.get(a.rule.id)?.some(c => c.otherRuleId === b.rule.id)) break;
+      }
+    }
+  }
+  return result;
+}
+
 export function categorize(name: string, description: string, rules: Rule[]): string {
   const text = `${name} ${description}`.toLowerCase();
 

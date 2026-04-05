@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { storage } from '../lib/storage';
-import { getDefaultRulesWithIds, categorize } from '../lib/categorizer';
+import { getDefaultRulesWithIds, categorize, getRuleConflicts } from '../lib/categorizer';
 import { formatCurrency } from '../lib/utils';
 import { CATEGORIES } from '../types';
 import type { Asset, Rule, Account, Budget } from '../types';
@@ -56,6 +56,18 @@ export default function Settings() {
   const [newCategory, setNewCategory] = useState<string>(CATEGORIES[0]);
   const [editingRule, setEditingRule] = useState<{ id: string; pattern: string; category: string } | null>(null);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
+
+  // Conflict detection — rules in different categories sharing a term
+  const conflicts = useMemo(() => getRuleConflicts(rules), [rules]);
+  const conflictCount = conflicts.size;
+  const categoriesWithConflicts = useMemo(() => {
+    const set = new Set<string>();
+    for (const [ruleId] of conflicts) {
+      const rule = rules.find(r => r.id === ruleId);
+      if (rule) set.add(rule.category);
+    }
+    return set;
+  }, [conflicts, rules]);
 
   const [cryptoHoldings, setCryptoHoldings] = useState<CryptoEdit[]>(() =>
     storage.getAssets().map(assetToEdit),
@@ -595,6 +607,18 @@ export default function Settings() {
           </label>
         </div>
 
+        {/* Conflict banner */}
+        {conflictCount > 0 && (
+          <div style={{
+            background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)',
+            borderRadius: '0.5rem', padding: '0.625rem 0.875rem', marginBottom: '0.75rem',
+            fontSize: '0.8rem', color: '#fbbf24', display: 'flex', alignItems: 'center', gap: '0.5rem',
+          }}>
+            <span>⚠</span>
+            <span><strong>{conflictCount} conflicterende regels</strong> — regels in verschillende categorieën delen termen. Open groepen met ⚠ om te zien welke.</span>
+          </div>
+        )}
+
         {/* Rules grouped by category */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
           {(() => {
@@ -639,6 +663,9 @@ export default function Settings() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       <span style={{ fontSize: '0.7rem', color: '#c4b5fd', transition: 'transform 0.15s', display: 'inline-block', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
                       <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#e2e8f0' }}>{category}</span>
+                      {categoriesWithConflicts.has(category) && (
+                        <span title="Bevat conflicterende regels" style={{ fontSize: '0.72rem', color: '#fbbf24' }}>⚠</span>
+                      )}
                     </div>
                     <span style={{ fontSize: '0.72rem', color: '#94a3b8', background: 'rgba(255,255,255,0.06)', padding: '0.1rem 0.5rem', borderRadius: '0.75rem' }}>
                       {groupRules.length}
@@ -711,6 +738,20 @@ export default function Settings() {
                                       eigen
                                     </span>
                                   )}
+                                  {conflicts.has(rule.id) && (() => {
+                                    const conflictList = conflicts.get(rule.id)!;
+                                    const summary = conflictList
+                                      .map(c => `"${c.sharedTerm}" ook in ${c.otherCategory}`)
+                                      .join('\n');
+                                    return (
+                                      <span
+                                        title={summary}
+                                        style={{ fontSize: '0.7rem', color: '#fbbf24', background: 'rgba(245,158,11,0.12)', padding: '0.1rem 0.4rem', borderRadius: '0.75rem', border: '1px solid rgba(245,158,11,0.3)' }}
+                                      >
+                                        ⚠ conflict: {conflictList[0].sharedTerm} ↔ {conflictList[0].otherCategory}{conflictList.length > 1 ? ` +${conflictList.length - 1}` : ''}
+                                      </span>
+                                    );
+                                  })()}
                                 </div>
                                 <button
                                   onClick={() => deleteRule(rule.id)}

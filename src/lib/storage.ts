@@ -1,4 +1,4 @@
-import type { Transaction, Account, Rule, Asset, Budget } from '../types';
+import type { Transaction, Account, Rule, Asset, Budget, Property } from '../types';
 import { parseSepaFields } from './parsers/abn';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
@@ -54,6 +54,7 @@ let _accounts: Account[] = [];
 let _rules: Rule[] = [];
 let _assets: Asset[] = [];
 let _budgets: Budget[] = [];
+let _properties: Property[] = [];
 let _settings: Record<string, unknown> = {};
 let _loaded = false;
 
@@ -64,6 +65,7 @@ export async function initStorage(): Promise<void> {
   _rules = await apiGet('/rules', []);
   _assets = await apiGet('/assets', []);
   _budgets = await apiGet('/budgets', []);
+  _properties = await apiGet('/properties', []);
   _settings = await apiGet('/settings', {});
   _loaded = true;
   // Clean up raw SEPA names from ABN imports
@@ -181,6 +183,13 @@ export const storage = {
     localStorage.setItem('vault_budgets', JSON.stringify(budgets));
   },
 
+  getProperties: () => _properties,
+  setProperties: (properties: Property[]) => {
+    _properties = properties;
+    apiPost('/properties', properties).catch(console.error);
+    localStorage.setItem('vault_properties', JSON.stringify(properties));
+  },
+
   /** Clear all transactions and accounts (keeps rules, assets, budgets) */
   clearTransactionsAndAccounts: () => {
     _transactions = [];
@@ -197,14 +206,17 @@ export const storage = {
     _accounts = [];
     _assets = [];
     _budgets = [];
+    _properties = [];
     apiPut('/transactions', []).catch(console.error);
     apiPost('/accounts', []).catch(console.error);
     apiPost('/assets', []).catch(console.error);
     apiPost('/budgets', []).catch(console.error);
+    apiPost('/properties', []).catch(console.error);
     localStorage.setItem('vault_transactions', JSON.stringify([]));
     localStorage.setItem('vault_accounts', JSON.stringify([]));
     localStorage.setItem('vault_assets', JSON.stringify([]));
     localStorage.setItem('vault_budgets', JSON.stringify([]));
+    localStorage.setItem('vault_properties', JSON.stringify([]));
   },
 
   /** Re-detect internal transfers based on current accounts */
@@ -224,20 +236,23 @@ export const storage = {
     rules: _rules,
     assets: _assets,
     budgets: _budgets,
+    properties: _properties,
     settings: _settings,
   }),
-  importAll: (data: { transactions?: Transaction[]; accounts?: Account[]; rules?: Rule[]; assets?: Asset[]; budgets?: Budget[]; settings?: Record<string, unknown> }) => {
+  importAll: (data: { transactions?: Transaction[]; accounts?: Account[]; rules?: Rule[]; assets?: Asset[]; budgets?: Budget[]; properties?: Property[]; settings?: Record<string, unknown> }) => {
     if (data.transactions) { _transactions = data.transactions; apiPut('/transactions', data.transactions).catch(console.error); }
     if (data.accounts) { _accounts = data.accounts; apiPost('/accounts', data.accounts).catch(console.error); }
     if (data.rules) { _rules = data.rules; apiPost('/rules', data.rules).catch(console.error); }
     if (data.assets) { _assets = data.assets; apiPost('/assets', data.assets).catch(console.error); }
     if (data.budgets) { _budgets = data.budgets; apiPost('/budgets', data.budgets).catch(console.error); }
+    if (data.properties) { _properties = data.properties; apiPost('/properties', data.properties).catch(console.error); }
     if (data.settings) { _settings = data.settings; apiPost('/settings', data.settings).catch(console.error); }
     localStorage.setItem('vault_transactions', JSON.stringify(_transactions));
     localStorage.setItem('vault_accounts', JSON.stringify(_accounts));
     localStorage.setItem('vault_rules', JSON.stringify(_rules));
     localStorage.setItem('vault_assets', JSON.stringify(_assets));
     localStorage.setItem('vault_budgets', JSON.stringify(_budgets));
+    localStorage.setItem('vault_properties', JSON.stringify(_properties));
   },
 };
 

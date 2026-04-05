@@ -3,7 +3,8 @@ import { storage } from '../lib/storage';
 import { getDefaultRulesWithIds, categorize, getRuleConflicts } from '../lib/categorizer';
 import { formatCurrency } from '../lib/utils';
 import { CATEGORIES } from '../types';
-import type { Asset, Rule, Account, Budget } from '../types';
+import type { Asset, Rule, Account, Budget, Property } from '../types';
+import { getMonthlyPayment, getPropertyEquityAt } from '../lib/property';
 
 const KNOWN_COINS: { type: string; symbol: string; name: string }[] = [
   { type: 'bitcoin', symbol: 'BTC', name: 'Bitcoin' },
@@ -73,6 +74,8 @@ export default function Settings() {
     storage.getAssets().map(assetToEdit),
   );
   const [newCoinType, setNewCoinType] = useState(KNOWN_COINS[0].type);
+
+  const [properties, setProperties] = useState<Property[]>(() => storage.getProperties());
 
   const [budgets, setBudgets] = useState<Budget[]>(() => storage.getBudgets());
   const [newBudgetCategory, setNewBudgetCategory] = useState('');
@@ -177,6 +180,57 @@ export default function Settings() {
       return;
     }
     setCryptoHoldings(prev => [...prev, { type: coin.type, symbol: coin.symbol, name: coin.name, amount: '', purchasePrice: '' }]);
+  }
+
+  function addProperty() {
+    const newProp: Property = {
+      id: `property-${Date.now()}`,
+      label: 'Hoofdwoning',
+      currentValue: 0,
+      valuationDate: new Date().toISOString().slice(0, 10),
+      annualGrowth: 0.03,
+    };
+    const updated = [...properties, newProp];
+    setProperties(updated);
+    storage.setProperties(updated);
+  }
+
+  function updateProperty(id: string, updates: Partial<Property>) {
+    const updated = properties.map(p => p.id === id ? { ...p, ...updates } : p);
+    setProperties(updated);
+    storage.setProperties(updated);
+  }
+
+  function updateMortgage(id: string, updates: Partial<NonNullable<Property['mortgage']>>) {
+    const updated = properties.map(p => {
+      if (p.id !== id) return p;
+      const current = p.mortgage ?? { balance: 0, interestRate: 0.038, monthsRemaining: 360, type: 'annuity' as const };
+      return { ...p, mortgage: { ...current, ...updates } };
+    });
+    setProperties(updated);
+    storage.setProperties(updated);
+  }
+
+  function toggleMortgage(id: string, enabled: boolean) {
+    const updated = properties.map(p => {
+      if (p.id !== id) return p;
+      if (enabled && !p.mortgage) {
+        return { ...p, mortgage: { balance: 0, interestRate: 0.038, monthsRemaining: 360, type: 'annuity' as const } };
+      }
+      if (!enabled) {
+        const { mortgage: _m, ...rest } = p;
+        return rest;
+      }
+      return p;
+    });
+    setProperties(updated);
+    storage.setProperties(updated);
+  }
+
+  function removeProperty(id: string) {
+    const updated = properties.filter(p => p.id !== id);
+    setProperties(updated);
+    storage.setProperties(updated);
   }
 
   function saveCrypto() {
@@ -352,6 +406,171 @@ export default function Settings() {
           </p>
         </div>
       )}
+
+      {/* Woning */}
+      <div className="glass-card">
+        <p style={sectionTitle}>Woning</p>
+
+        {properties.length === 0 && (
+          <p style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.75rem' }}>
+            Nog geen woning toegevoegd. Voeg je woning toe om overwaarde mee te nemen in netto vermogen en projecties.
+          </p>
+        )}
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          {properties.map(prop => {
+            const equity = getPropertyEquityAt(prop, new Date());
+            const monthly = prop.mortgage
+              ? getMonthlyPayment(prop.mortgage.balance, prop.mortgage.interestRate, prop.mortgage.monthsRemaining)
+              : 0;
+            return (
+              <div
+                key={prop.id}
+                style={{
+                  padding: '0.875rem',
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid rgba(255,255,255,0.07)',
+                  borderRadius: '0.5rem',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.75rem',
+                }}
+              >
+                {/* Label + remove */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    className="glass-input"
+                    style={{ ...inputStyle, flex: 1 }}
+                    value={prop.label}
+                    onChange={e => updateProperty(prop.id, { label: e.target.value })}
+                    placeholder="bv. Hoofdwoning"
+                  />
+                  <button
+                    onClick={() => removeProperty(prop.id)}
+                    className="glass-button"
+                    style={{ padding: '0.4rem 0.6rem', fontSize: '0.8rem', color: '#f87171', fontFamily: 'inherit', cursor: 'pointer' }}
+                    title="Verwijder"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {/* Value + growth + date */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600 }}>Waarde (€)</span>
+                    <input
+                      type="number"
+                      step="1000"
+                      className="glass-input"
+                      style={inputStyle}
+                      value={prop.currentValue || ''}
+                      onChange={e => updateProperty(prop.id, { currentValue: parseFloat(e.target.value) || 0 })}
+                    />
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600 }}>Groei per jaar (%)</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      className="glass-input"
+                      style={inputStyle}
+                      value={prop.annualGrowth * 100}
+                      onChange={e => updateProperty(prop.id, { annualGrowth: (parseFloat(e.target.value) || 0) / 100 })}
+                    />
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600 }}>Waarderingsdatum</span>
+                    <input
+                      type="date"
+                      className="glass-input"
+                      style={inputStyle}
+                      value={prop.valuationDate}
+                      onChange={e => updateProperty(prop.id, { valuationDate: e.target.value })}
+                    />
+                  </label>
+                </div>
+
+                {/* Mortgage toggle */}
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem', color: '#cbd5e1', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={!!prop.mortgage}
+                    onChange={e => toggleMortgage(prop.id, e.target.checked)}
+                  />
+                  Hypotheek
+                </label>
+
+                {prop.mortgage && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                      <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600 }}>Openstaand (€)</span>
+                      <input
+                        type="number"
+                        step="1000"
+                        className="glass-input"
+                        style={inputStyle}
+                        value={prop.mortgage.balance || ''}
+                        onChange={e => updateMortgage(prop.id, { balance: parseFloat(e.target.value) || 0 })}
+                      />
+                    </label>
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                      <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600 }}>Rente (%)</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        className="glass-input"
+                        style={inputStyle}
+                        value={prop.mortgage.interestRate * 100}
+                        onChange={e => updateMortgage(prop.id, { interestRate: (parseFloat(e.target.value) || 0) / 100 })}
+                      />
+                    </label>
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                      <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600 }}>Looptijd (jaren)</span>
+                      <input
+                        type="number"
+                        step="1"
+                        className="glass-input"
+                        style={inputStyle}
+                        value={Math.round(prop.mortgage.monthsRemaining / 12)}
+                        onChange={e => updateMortgage(prop.id, { monthsRemaining: Math.round((parseFloat(e.target.value) || 0) * 12) })}
+                      />
+                    </label>
+                  </div>
+                )}
+
+                {/* Summary */}
+                <div style={{
+                  display: 'flex',
+                  gap: '1rem',
+                  flexWrap: 'wrap',
+                  padding: '0.5rem 0.75rem',
+                  background: 'rgba(139, 92, 246, 0.08)',
+                  borderRadius: '0.375rem',
+                  fontSize: '0.8rem',
+                }}>
+                  <span style={{ color: '#94a3b8' }}>
+                    Overwaarde: <strong style={{ color: equity >= 0 ? '#6ee7b7' : '#f87171' }}>{formatCurrency(equity)}</strong>
+                  </span>
+                  {prop.mortgage && monthly > 0 && (
+                    <span style={{ color: '#94a3b8' }}>
+                      Maandlast: <strong style={{ color: '#cbd5e1' }}>~{formatCurrency(monthly)}</strong>
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <button
+          onClick={addProperty}
+          className="glass-button"
+          style={{ marginTop: properties.length > 0 ? '1rem' : '0', padding: '0.5rem 1rem', fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer', color: '#cbd5e1' }}
+        >
+          + Woning toevoegen
+        </button>
+      </div>
 
       {/* Crypto Portfolio */}
       <div className="glass-card">

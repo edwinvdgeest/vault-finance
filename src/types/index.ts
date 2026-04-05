@@ -41,6 +41,20 @@ export interface Asset {
   lastUpdated: string;
 }
 
+export interface Property {
+  id: string;
+  label: string;              // e.g. "Hoofdwoning"
+  currentValue: number;       // current WOZ/market value (EUR)
+  valuationDate: string;      // ISO YYYY-MM-DD
+  annualGrowth: number;       // e.g. 0.03 (3% per year)
+  mortgage?: {
+    balance: number;          // outstanding principal (EUR)
+    interestRate: number;     // e.g. 0.038 (3.8% nominal annual)
+    monthsRemaining: number;  // remaining term in months
+    type: 'annuity' | 'interest-only';
+  };
+}
+
 export interface Budget {
   category: string;
   monthlyLimit: number;

@@ -23,6 +23,15 @@ export interface LifePhase {
   monthlyContribution: number;
 }
 
+export interface PropertyProjection {
+  startValue: number;
+  startDebt: number;
+  annualGrowth: number;
+  monthlyPayment: number;
+  interestRate: number;
+  monthsRemaining: number;
+}
+
 export interface ProjectionParams {
   startCapital: number;
   monthlyContribution: number;
@@ -34,6 +43,7 @@ export interface ProjectionParams {
   goalAmount: number;
   adjustForInflation: boolean;
   phases?: LifePhase[]; // optional life phases override
+  property?: PropertyProjection; // optional woning component (deterministic)
 }
 
 export interface YearlyDataPoint {
@@ -44,8 +54,11 @@ export interface YearlyDataPoint {
   p50: number;
   p75: number;
   p90: number;
+  propertyValue?: number;
+  mortgageBalance?: number;
+  propertyEquity?: number;
   // For scenario comparison
-  [key: string]: number | string;
+  [key: string]: number | string | undefined;
 }
 
 export interface ProjectionResult {
@@ -80,6 +93,7 @@ export function runProjection(params: ProjectionParams): ProjectionResult {
     goalAmount,
     adjustForInflation,
     phases,
+    property,
   } = params;
 
   const monthlyMu = annualReturn / 12;
@@ -87,6 +101,34 @@ export function runProjection(params: ProjectionParams): ProjectionResult {
   const monthlyInflation = inflationRate / 12;
   const totalMonths = years * 12;
   const hasPhases = phases && phases.length > 0;
+
+  // Pre-compute deterministic property schedule (same across simulations)
+  const propertySchedule: { value: number; debt: number; equity: number }[] = [];
+  if (property) {
+    const monthlyGrowth = property.annualGrowth / 12;
+    const r = property.interestRate / 12;
+    let value = property.startValue;
+    let debt = property.startDebt;
+    const paymentMonths = property.monthsRemaining;
+    let monthsPaid = 0;
+    for (let m = 1; m <= totalMonths; m++) {
+      value = value * (1 + monthlyGrowth);
+      if (debt > 0 && monthsPaid < paymentMonths) {
+        const interest = debt * r;
+        const principal = Math.max(0, property.monthlyPayment - interest);
+        debt = Math.max(0, debt - principal);
+        monthsPaid++;
+      }
+      if (m % 12 === 0) {
+        const deflated = adjustForInflation ? 1 / Math.pow(1 + monthlyInflation, m) : 1;
+        propertySchedule.push({
+          value: value * deflated,
+          debt: debt * deflated,
+          equity: (value - debt) * deflated,
+        });
+      }
+    }
+  }
 
   const simEndValues: number[][] = Array.from({ length: years }, () => []);
   const finalValues: number[] = [];
@@ -120,12 +162,22 @@ export function runProjection(params: ProjectionParams): ProjectionResult {
   }
 
   const currentYear = new Date().getFullYear();
+  const startEquity = property ? property.startValue - property.startDebt : 0;
   const yearlyData: YearlyDataPoint[] = [
-    { year: 0, label: String(currentYear), p10: startCapital, p25: startCapital, p50: startCapital, p75: startCapital, p90: startCapital },
+    {
+      year: 0, label: String(currentYear),
+      p10: startCapital, p25: startCapital, p50: startCapital, p75: startCapital, p90: startCapital,
+      ...(property ? {
+        propertyValue: Math.round(property.startValue),
+        mortgageBalance: Math.round(property.startDebt),
+        propertyEquity: Math.round(startEquity),
+      } : {}),
+    },
   ];
 
   for (let y = 0; y < years; y++) {
     const sorted = simEndValues[y].slice().sort((a, b) => a - b);
+    const prop = propertySchedule[y];
     yearlyData.push({
       year: y + 1,
       label: String(currentYear + y + 1),
@@ -134,6 +186,11 @@ export function runProjection(params: ProjectionParams): ProjectionResult {
       p50: Math.round(percentile(sorted, 50)),
       p75: Math.round(percentile(sorted, 75)),
       p90: Math.round(percentile(sorted, 90)),
+      ...(prop ? {
+        propertyValue: Math.round(prop.value),
+        mortgageBalance: Math.round(prop.debt),
+        propertyEquity: Math.round(prop.equity),
+      } : {}),
     });
   }
 

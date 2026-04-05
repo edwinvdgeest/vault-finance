@@ -1,5 +1,6 @@
-import type { Transaction, Account, Budget } from '../types';
+import type { Transaction, Account, Budget, Property } from '../types';
 import { toYearMonth, startOfMonth, endOfMonth, formatMonth } from './utils';
+import { getTotalPropertyEquity } from './property';
 
 /** Returns true for transactions that should be excluded from income/expense reporting */
 function isTransfer(tx: Transaction): boolean {
@@ -19,16 +20,18 @@ export function getNetWorth(
   accounts: Account[],
   transactions: Transaction[],
   cryptoValue: number,
+  propertyEquity: number,
   asOf?: Date,
 ): number {
   const cash = accounts.reduce((sum, acc) => sum + getAccountBalance(acc, transactions, asOf), 0);
-  return cash + cryptoValue;
+  return cash + cryptoValue + propertyEquity;
 }
 
 export function getMonthlyNetWorthTrend(
   accounts: Account[],
   transactions: Transaction[],
   cryptoValue: number,
+  properties: Property[] = [],
 ): { month: string; label: string; netWorth: number }[] {
   if (accounts.length === 0 && transactions.length === 0) return [];
 
@@ -40,7 +43,8 @@ export function getMonthlyNetWorthTrend(
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     const end = endOfMonth(d);
     const month = toYearMonth(d);
-    const nw = getNetWorth(accounts, transactions, cryptoValue, end);
+    const equity = getTotalPropertyEquity(properties, end).equity;
+    const nw = getNetWorth(accounts, transactions, cryptoValue, equity, end);
     months.push({ month, label: formatMonth(month), netWorth: nw });
   }
 
@@ -56,6 +60,7 @@ export function getNetWorthTrend(
   start: Date,
   end: Date,
   granularity: TrendGranularity,
+  properties: Property[] = [],
 ): { label: string; netWorth: number; date: string }[] {
   if (accounts.length === 0 && transactions.length === 0) return [];
 
@@ -70,7 +75,8 @@ export function getNetWorthTrend(
       ? endOfMonth(cur)
       : new Date(cur);
     const asOf = pointDate > end ? end : pointDate;
-    const nw = getNetWorth(accounts, transactions, cryptoValue, asOf);
+    const equity = getTotalPropertyEquity(properties, asOf).equity;
+    const nw = getNetWorth(accounts, transactions, cryptoValue, equity, asOf);
 
     const label = granularity === 'monthly'
       ? asOf.toLocaleDateString('nl-NL', { month: 'short' })

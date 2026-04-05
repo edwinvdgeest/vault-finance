@@ -18,7 +18,6 @@ import {
 import { storage } from '../lib/storage';
 import {
   getNetWorth,
-  getMonthlyNetWorthTrend,
   getNetWorthTrend,
   getMonthlyIncomeExpense,
   getCategorySpending,
@@ -26,7 +25,6 @@ import {
   getTopExpenses,
   getLastMonthEnd,
   filterByPeriod,
-  getPeriodSummary,
   getPeriodSummaryWithDelta,
   getRecurringExpenses,
   getCategoryTrend,
@@ -36,6 +34,7 @@ import {
   getCashflowSankey,
 } from '../lib/analytics';
 import { formatCurrency, getPeriodDates } from '../lib/utils';
+import { getTotalPropertyEquity } from '../lib/property';
 import MiniSparkline from '../components/MiniSparkline';
 import CashflowSankey from '../components/CashflowSankey';
 import type { Asset, PeriodFilter } from '../types';
@@ -108,14 +107,18 @@ export default function Dashboard() {
   const transactions = storage.getTransactions();
   const accounts = storage.getAccounts();
   const assets = storage.getAssets();
+  const properties = storage.getProperties();
 
   const { start, end, label: periodLabel } = getPeriodDates(period, customStart, customEnd, periodOffset);
   const periodTxs = filterByPeriod(transactions, start, end);
 
   const totalCryptoValue = computeTotalCryptoValue(assets, cryptoPrices);
-  const currentNetWorth = getNetWorth(accounts, transactions, totalCryptoValue);
+  const currentPropertyEq = getTotalPropertyEquity(properties).equity;
+  const lastMonthEnd = getLastMonthEnd();
+  const lastMonthPropertyEq = getTotalPropertyEquity(properties, lastMonthEnd).equity;
+  const currentNetWorth = getNetWorth(accounts, transactions, totalCryptoValue, currentPropertyEq);
   const lastMonthTotalCrypto = computeTotalCryptoValue(assets, cryptoPrices);
-  const lastMonthNetWorth = getNetWorth(accounts, transactions, lastMonthTotalCrypto, getLastMonthEnd());
+  const lastMonthNetWorth = getNetWorth(accounts, transactions, lastMonthTotalCrypto, lastMonthPropertyEq, lastMonthEnd);
   const netWorthDelta = currentNetWorth - lastMonthNetWorth;
   const netWorthDeltaPct = lastMonthNetWorth !== 0 ? (netWorthDelta / Math.abs(lastMonthNetWorth)) * 100 : 0;
 
@@ -123,7 +126,7 @@ export default function Dashboard() {
   const granularity = period === 'this-month' || period === 'last-month'
     ? 'daily' as const
     : period === 'quarter' ? 'weekly' as const : 'monthly' as const;
-  const trendData = getNetWorthTrend(accounts, transactions, totalCryptoValue, start, end, granularity);
+  const trendData = getNetWorthTrend(accounts, transactions, totalCryptoValue, start, end, granularity, properties);
   const incomeExpenseData = getMonthlyIncomeExpense(periodTxs, start, end);
   const categoryData = getCategorySpending(periodTxs);
   const accountData = getAccountBreakdown(accounts, transactions);
@@ -210,7 +213,7 @@ export default function Dashboard() {
     fetchAll();
   }, [assets.length]);
 
-  const isEmpty = accounts.length === 0 && transactions.length === 0 && assets.length === 0;
+  const isEmpty = accounts.length === 0 && transactions.length === 0 && assets.length === 0 && properties.length === 0;
 
   if (isEmpty) {
     return (
@@ -245,9 +248,15 @@ export default function Dashboard() {
               </span>
               <span style={{ color: '#64748b', fontSize: '0.8rem' }}>t.o.v. vorige maand</span>
             </div>
-            {totalCryptoValue > 0 && (
-              <div style={{ marginTop: '0.5rem', color: '#94a3b8', fontSize: '0.8rem' }}>
-                Crypto: <span style={{ color: '#f59e0b' }}>{formatCurrency(totalCryptoValue)}</span>
+            {(totalCryptoValue > 0 || currentPropertyEq !== 0) && (
+              <div style={{ marginTop: '0.5rem', color: '#94a3b8', fontSize: '0.8rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <span>💰 Cash: <span style={{ color: '#06b6d4' }}>{formatCurrency(currentNetWorth - totalCryptoValue - currentPropertyEq)}</span></span>
+                {totalCryptoValue > 0 && (
+                  <span>₿ Crypto: <span style={{ color: '#f59e0b' }}>{formatCurrency(totalCryptoValue)}</span></span>
+                )}
+                {currentPropertyEq !== 0 && (
+                  <span>🏠 Woning: <span style={{ color: '#8b5cf6' }}>{formatCurrency(currentPropertyEq)}</span></span>
+                )}
               </div>
             )}
           </div>

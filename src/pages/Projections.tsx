@@ -6,7 +6,8 @@ import { storage } from '../lib/storage';
 import { getNetWorth, getPeriodSummary, filterByPeriod } from '../lib/analytics';
 import { formatCurrency, getPeriodDates } from '../lib/utils';
 import { runProjection, runScenarioMedian } from '../lib/projections';
-import type { ProjectionResult, LifePhase } from '../lib/projections';
+import type { ProjectionResult, LifePhase, PropertyProjection } from '../lib/projections';
+import { getMonthlyPayment, getTotalPropertyEquity } from '../lib/property';
 
 const tooltipStyle = {
   background: 'rgba(15, 10, 30, 0.95)',
@@ -41,21 +42,57 @@ function SliderInput({
 }
 
 const SCENARIO_COLORS = ['#06b6d4', '#f59e0b', '#10b981'];
-const SCENARIO_LABELS = ['Conservatief', 'Normaal', 'Agressief'];
 
 type Tab = 'projection' | 'scenarios' | 'fire';
 
 export default function Projections() {
   const transactions = storage.getTransactions();
   const accounts = storage.getAccounts();
+  const properties = storage.getProperties();
 
-  const currentNetWorth = getNetWorth(accounts, transactions, 0);
+  const propertyEquity = getTotalPropertyEquity(properties).equity;
+  const currentNetWorth = getNetWorth(accounts, transactions, 0, 0);
+  const hasProperty = properties.length > 0;
+
+  // Combine all properties into a single aggregated projection (if any)
+  const aggregatedProperty: PropertyProjection | null = hasProperty ? (() => {
+    const totals = getTotalPropertyEquity(properties);
+    // Use first property's growth/mortgage params (most common case: one woning)
+    // For multiple, sum mortgage balance and use weighted rates
+    let totalBalance = 0;
+    let weightedRate = 0;
+    let maxMonths = 0;
+    let weightedGrowth = 0;
+    let totalValue = 0;
+    for (const p of properties) {
+      totalValue += p.currentValue;
+      weightedGrowth += p.currentValue * p.annualGrowth;
+      if (p.mortgage) {
+        totalBalance += p.mortgage.balance;
+        weightedRate += p.mortgage.balance * p.mortgage.interestRate;
+        maxMonths = Math.max(maxMonths, p.mortgage.monthsRemaining);
+      }
+    }
+    const avgGrowth = totalValue > 0 ? weightedGrowth / totalValue : 0.03;
+    const avgRate = totalBalance > 0 ? weightedRate / totalBalance : 0;
+    const monthlyPayment = getMonthlyPayment(totalBalance, avgRate, maxMonths);
+    return {
+      startValue: totals.value,
+      startDebt: totals.debt,
+      annualGrowth: avgGrowth,
+      monthlyPayment,
+      interestRate: avgRate,
+      monthsRemaining: maxMonths,
+    };
+  })() : null;
   const { start, end } = getPeriodDates('year');
   const yearTxs = filterByPeriod(transactions, start, end);
   const summary = getPeriodSummary(yearTxs);
   const avgMonthlySavings = Math.max(0, Math.round(summary.cashflow / 12));
 
   const [tab, setTab] = useState<Tab>('projection');
+
+  const [includeProperty, setIncludeProperty] = useState(hasProperty);
 
   // Shared inputs
   const [startCapital, setStartCapital] = useState(Math.round(currentNetWorth));
@@ -88,7 +125,8 @@ export default function Projections() {
     goalAmount: tab === 'fire' ? fireNumber : goalAmount,
     adjustForInflation: adjustInflation,
     phases: showPhases && phases.length > 0 ? phases : undefined,
-  }), [startCapital, monthlyContrib, annualReturn, volatility, inflation, years, goalAmount, adjustInflation, phases, showPhases, tab, fireNumber]);
+    property: includeProperty && aggregatedProperty ? aggregatedProperty : undefined,
+  }), [startCapital, monthlyContrib, annualReturn, volatility, inflation, years, goalAmount, adjustInflation, phases, showPhases, tab, fireNumber, includeProperty, aggregatedProperty]);
 
   // Main projection
   const result: ProjectionResult = useMemo(() => runProjection(baseParams), [baseParams]);
@@ -182,6 +220,15 @@ export default function Projections() {
             <div className="glass-card" style={{ padding: '1rem' }}>
               <p style={{ fontSize: '0.7rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.3rem' }}>Mediaan na {years} jaar</p>
               <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#10b981' }}>{formatCurrency(result.medianFinal)}</div>
+              {includeProperty && aggregatedProperty && (() => {
+                const last = result.yearlyData[result.yearlyData.length - 1];
+                const eq = typeof last?.propertyEquity === 'number' ? last.propertyEquity : 0;
+                return (
+                  <div style={{ fontSize: '0.68rem', color: '#64748b', marginTop: '0.3rem' }}>
+                    + 🏠 {formatCurrency(eq)} = <strong style={{ color: '#cbd5e1' }}>{formatCurrency(result.medianFinal + eq)}</strong>
+                  </div>
+                );
+              })()}
             </div>
             <div className="glass-card" style={{ padding: '1rem' }}>
               <p style={{ fontSize: '0.7rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.3rem' }}>Pessimistisch (P10)</p>
@@ -217,9 +264,9 @@ export default function Projections() {
               <YAxis tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false}
                 tickFormatter={v => v >= 1000000 ? `€${(v / 1000000).toFixed(1)}M` : `€${(v / 1000).toFixed(0)}k`} />
               <Tooltip contentStyle={tooltipStyle}
-                formatter={(value: number, name: string) => {
+                formatter={(value, name) => {
                   const labels: Record<string, string> = { conservative: `Conservatief (${annualReturn - 2}%)`, normal: `Normaal (${annualReturn}%)`, aggressive: `Agressief (${annualReturn + 2}%)` };
-                  return [formatCurrency(value), labels[name] ?? name];
+                  return [formatCurrency(Number(value)), labels[String(name)] ?? String(name)];
                 }} />
               <Legend formatter={(name: string) => {
                 const labels: Record<string, string> = { conservative: `Conservatief (${annualReturn - 2}%)`, normal: `Normaal (${annualReturn}%)`, aggressive: `Agressief (${annualReturn + 2}%)` };
@@ -251,9 +298,9 @@ export default function Projections() {
               <YAxis tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false}
                 tickFormatter={v => v >= 1000000 ? `€${(v / 1000000).toFixed(1)}M` : `€${(v / 1000).toFixed(0)}k`} />
               <Tooltip contentStyle={tooltipStyle}
-                formatter={(value: number, name: string) => {
+                formatter={(value, name) => {
                   const labels: Record<string, string> = { p90: 'P90 (optimistisch)', p75: 'P75', p50: 'Mediaan', p25: 'P25', p10: 'P10 (pessimistisch)' };
-                  return [formatCurrency(value), labels[name] ?? name];
+                  return [formatCurrency(Number(value)), labels[String(name)] ?? String(name)];
                 }} />
               <Area type="monotone" dataKey="p90" stackId="bg" stroke="none" fill="url(#bandOuter)" />
               <Area type="monotone" dataKey="p10" stackId="bg2" stroke="none" fill="none" />
@@ -434,6 +481,17 @@ export default function Projections() {
               <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Corrigeer voor inflatie</span>
             </label>
           </div>
+          {hasProperty && (
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', userSelect: 'none' }}>
+                <input type="checkbox" checked={includeProperty} onChange={e => setIncludeProperty(e.target.checked)}
+                  style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#8b5cf6' }} />
+                <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+                  🏠 Woning meenemen ({formatCurrency(propertyEquity)} overwaarde)
+                </span>
+              </label>
+            </div>
+          )}
         </div>
       </div>
     </div>

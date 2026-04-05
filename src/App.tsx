@@ -6,6 +6,7 @@ import Import from './pages/Import';
 import Settings from './pages/Settings';
 import Calendar from './pages/Calendar';
 import Projections from './pages/Projections';
+import Taxes from './pages/Taxes';
 
 export default function App() {
   return (
@@ -16,6 +17,7 @@ export default function App() {
           <Route path="/transactions" element={<Transactions />} />
           <Route path="/calendar" element={<Calendar />} />
           <Route path="/projections" element={<Projections />} />
+          <Route path="/taxes" element={<Taxes />} />
           <Route path="/import" element={<Import />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>

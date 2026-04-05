@@ -48,6 +48,17 @@ function IconTrendUp() {
   );
 }
 
+function IconReceipt() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 2v20l2-1.5L8 22l2-1.5L12 22l2-1.5L16 22l2-1.5L20 22V2l-2 1.5L16 2l-2 1.5L12 2l-2 1.5L8 2 6 3.5 4 2z" />
+      <line x1="8" y1="8" x2="16" y2="8" />
+      <line x1="8" y1="12" x2="16" y2="12" />
+      <line x1="8" y1="16" x2="12" y2="16" />
+    </svg>
+  );
+}
+
 function IconSettings() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -62,6 +73,7 @@ const NAV = [
   { to: '/transactions', label: 'Transacties', shortLabel: 'Transacties', Icon: IconList },
   { to: '/calendar', label: 'Kalender', shortLabel: 'Kalender', Icon: IconCalendar },
   { to: '/projections', label: 'Projecties', shortLabel: 'Projecties', Icon: IconTrendUp },
+  { to: '/taxes', label: 'Belasting', shortLabel: 'Belasting', Icon: IconReceipt },
   { to: '/import', label: 'Import', shortLabel: 'Import', Icon: IconUpload },
   { to: '/settings', label: 'Instellingen', shortLabel: 'Stel in', Icon: IconSettings },
 ];

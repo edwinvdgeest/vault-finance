@@ -465,6 +465,98 @@ export function getCashflowSankey(transactions: Transaction[]): SankeyData {
   return { nodes, links };
 }
 
+export const TAX_TYPES = ['Belastingdienst', 'Gemeente', 'Waterschap', 'CAK', 'DUO', 'CJIB', 'Overig'] as const;
+export type TaxType = typeof TAX_TYPES[number];
+
+export function classifyTaxType(tx: Transaction): TaxType {
+  const text = `${tx.name} ${tx.counterparty} ${tx.description}`.toLowerCase();
+  if (text.includes('belastingdienst')) return 'Belastingdienst';
+  if (text.includes('gemeente')) return 'Gemeente';
+  if (text.includes('waterschap')) return 'Waterschap';
+  if (/\bcak\b/.test(text)) return 'CAK';
+  if (/\bduo\b/.test(text)) return 'DUO';
+  if (/\bcjib\b/.test(text)) return 'CJIB';
+  // Fallback: catches "belasting" but not the above (e.g. motorrijtuigenbelasting)
+  if (text.includes('belasting')) return 'Belastingdienst';
+  return 'Overig';
+}
+
+export interface TaxYearBreakdown {
+  year: string;
+  paid: number;
+  refunds: number;
+  net: number;
+  income: number;
+  pctOfIncome: number;
+  byType: { type: TaxType; paid: number; refunds: number; net: number; count: number }[];
+  transactions: Transaction[];
+}
+
+export function getTaxBreakdown(transactions: Transaction[]): TaxYearBreakdown[] {
+  // Group by year
+  const byYear = new Map<string, Transaction[]>();
+  for (const tx of transactions) {
+    const year = tx.date.slice(0, 4);
+    if (!byYear.has(year)) byYear.set(year, []);
+    byYear.get(year)!.push(tx);
+  }
+
+  const results: TaxYearBreakdown[] = [];
+  for (const [year, yearTxs] of byYear) {
+    // Income calculation for this year
+    let income = 0;
+    for (const tx of yearTxs) {
+      if (isTransfer(tx)) continue;
+      if (tx.amount > 0 && tx.category !== 'Belastingen') income += tx.amount;
+    }
+
+    // Tax breakdown
+    const taxTxs = yearTxs.filter(t => t.category === 'Belastingen');
+    let paid = 0;
+    let refunds = 0;
+    const typeMap = new Map<TaxType, { paid: number; refunds: number; count: number }>();
+
+    for (const tx of taxTxs) {
+      if (tx.amount < 0) paid += Math.abs(tx.amount);
+      else refunds += tx.amount;
+      const type = classifyTaxType(tx);
+      if (!typeMap.has(type)) typeMap.set(type, { paid: 0, refunds: 0, count: 0 });
+      const e = typeMap.get(type)!;
+      if (tx.amount < 0) e.paid += Math.abs(tx.amount);
+      else e.refunds += tx.amount;
+      e.count += 1;
+    }
+
+    const net = paid - refunds;
+    const byType = TAX_TYPES
+      .filter(t => typeMap.has(t))
+      .map(t => {
+        const e = typeMap.get(t)!;
+        return {
+          type: t,
+          paid: Math.round(e.paid * 100) / 100,
+          refunds: Math.round(e.refunds * 100) / 100,
+          net: Math.round((e.paid - e.refunds) * 100) / 100,
+          count: e.count,
+        };
+      })
+      .sort((a, b) => b.net - a.net);
+
+    results.push({
+      year,
+      paid: Math.round(paid * 100) / 100,
+      refunds: Math.round(refunds * 100) / 100,
+      net: Math.round(net * 100) / 100,
+      income: Math.round(income * 100) / 100,
+      pctOfIncome: income > 0 ? Math.round((net / income) * 1000) / 10 : 0,
+      byType,
+      transactions: taxTxs.slice().sort((a, b) => b.date.localeCompare(a.date)),
+    });
+  }
+
+  return results.sort((a, b) => b.year.localeCompare(a.year));
+}
+
 export function filterByPeriod(transactions: Transaction[], start: Date, end: Date): Transaction[] {
   return transactions.filter(tx => {
     const d = new Date(tx.date + 'T00:00:00');

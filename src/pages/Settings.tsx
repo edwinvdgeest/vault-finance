@@ -82,6 +82,8 @@ export default function Settings() {
 
   const [saved, setSaved] = useState('');
   const [onlyOverig, setOnlyOverig] = useState(true);
+  const [isRecategorizing, setIsRecategorizing] = useState(false);
+  const [ruleSearch, setRuleSearch] = useState('');
 
   function showSaved(msg: string) {
     setSaved(msg);
@@ -139,17 +141,22 @@ export default function Settings() {
   }
 
   function recategorize() {
-    const transactions = storage.getTransactions();
-    const currentRules = storage.getRules().length > 0 ? storage.getRules() : getDefaultRulesWithIds();
-    const updated = transactions.map(tx => {
-      if (onlyOverig && tx.category !== 'Overig') return tx;
-      return { ...tx, category: categorize(tx.name, tx.description, currentRules) };
+    setIsRecategorizing(true);
+    // Defer to next frame so the UI updates with loading state before blocking
+    requestAnimationFrame(() => {
+      const transactions = storage.getTransactions();
+      const currentRules = storage.getRules().length > 0 ? storage.getRules() : getDefaultRulesWithIds();
+      const updated = transactions.map(tx => {
+        if (onlyOverig && tx.category !== 'Overig') return tx;
+        return { ...tx, category: categorize(tx.name, tx.description, currentRules) };
+      });
+      storage.setTransactions(updated);
+      const count = onlyOverig
+        ? transactions.filter(tx => tx.category === 'Overig').length
+        : updated.length;
+      setIsRecategorizing(false);
+      showSaved(`${count} transacties opnieuw gecategoriseerd`);
     });
-    storage.setTransactions(updated);
-    const count = onlyOverig
-      ? transactions.filter(tx => tx.category === 'Overig').length
-      : updated.length;
-    showSaved(`${count} transacties opnieuw gecategoriseerd`);
   }
 
   function addRule() {
@@ -304,10 +311,23 @@ export default function Settings() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', maxWidth: 720 }}>
       {saved && (
-        <div style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: '0.5rem', padding: '0.625rem 1rem', color: '#6ee7b7', fontSize: '0.875rem' }}>
+        <div style={{
+          position: 'fixed', bottom: '1.5rem', left: '50%', transform: 'translateX(-50%)',
+          background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.4)',
+          borderRadius: '0.75rem', padding: '0.75rem 1.5rem', color: '#6ee7b7',
+          fontSize: '0.875rem', fontWeight: 500, zIndex: 1000,
+          backdropFilter: 'blur(12px)', boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
+          animation: 'toast-in 0.3s ease-out',
+        }}>
           ✓ {saved}
         </div>
       )}
+      <style>{`
+        @keyframes toast-in {
+          from { opacity: 0; transform: translateX(-50%) translateY(1rem); }
+          to { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
+      `}</style>
 
       {/* Rekeningen */}
       {accounts.length > 0 && (
@@ -806,14 +826,33 @@ export default function Settings() {
           </button>
         </div>
 
+        {/* Search rules */}
+        <div style={{ position: 'relative', marginBottom: '1rem' }}>
+          <span style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: '#64748b', fontSize: '0.85rem', pointerEvents: 'none' }}>🔍</span>
+          <input
+            className="glass-input"
+            style={{ ...inputStyle, width: '100%', paddingLeft: '2.25rem' }}
+            placeholder="Zoek op patroon of categorie..."
+            value={ruleSearch}
+            onChange={e => setRuleSearch(e.target.value)}
+          />
+          {ruleSearch && (
+            <button
+              onClick={() => setRuleSearch('')}
+              style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1rem', lineHeight: 1, padding: '0.25rem' }}
+            >×</button>
+          )}
+        </div>
+
         {/* Recategorize */}
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
           <button
             className="glass-button"
-            style={{ fontFamily: 'inherit', padding: '0.5rem 1.25rem', fontSize: '0.875rem', fontWeight: 600, background: 'rgba(6,182,212,0.15)', borderColor: 'rgba(6,182,212,0.3)', color: 'white', whiteSpace: 'nowrap' }}
+            style={{ fontFamily: 'inherit', padding: '0.5rem 1.25rem', fontSize: '0.875rem', fontWeight: 600, background: 'rgba(6,182,212,0.15)', borderColor: 'rgba(6,182,212,0.3)', color: 'white', whiteSpace: 'nowrap', opacity: isRecategorizing ? 0.6 : 1, cursor: isRecategorizing ? 'wait' : 'pointer' }}
             onClick={recategorize}
+            disabled={isRecategorizing}
           >
-            Herindelen
+            {isRecategorizing ? '⏳ Bezig...' : 'Herindelen'}
           </button>
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.875rem', color: '#94a3b8', userSelect: 'none' }}>
             <input
@@ -841,9 +880,19 @@ export default function Settings() {
         {/* Rules grouped by category */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
           {(() => {
+            // Filter rules by search query
+            const searchLower = ruleSearch.toLowerCase().trim();
+            const filteredRules = searchLower
+              ? rules.filter(r => r.pattern.toLowerCase().includes(searchLower) || r.category.toLowerCase().includes(searchLower))
+              : rules;
+
+            if (searchLower && filteredRules.length === 0) {
+              return <div style={{ padding: '1rem', textAlign: 'center', color: '#64748b', fontSize: '0.85rem' }}>Geen regels gevonden voor "{ruleSearch}"</div>;
+            }
+
             // Group rules by category
             const grouped = new Map<string, typeof rules>();
-            for (const rule of rules) {
+            for (const rule of filteredRules) {
               if (!grouped.has(rule.category)) grouped.set(rule.category, []);
               grouped.get(rule.category)!.push(rule);
             }
@@ -855,7 +904,7 @@ export default function Settings() {
 
             return sortedCategories.map(category => {
               const groupRules = grouped.get(category)!;
-              const isExpanded = expandedCategories.has(category) || editingCategory === category;
+              const isExpanded = expandedCategories.has(category) || editingCategory === category || !!searchLower;
               return (
                 <div key={category} style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                   {/* Category header */}

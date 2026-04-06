@@ -90,6 +90,24 @@ app.post('/api/assets', (req, res) => {
   res.json(assets);
 });
 
+// --- Properties ---
+app.get('/api/properties', (_, res) => res.json(readJSON('properties.json')));
+
+app.post('/api/properties', (req, res) => {
+  const properties = req.body || [];
+  writeJSON('properties.json', properties);
+  res.json(properties);
+});
+
+// --- Budgets ---
+app.get('/api/budgets', (_, res) => res.json(readJSON('budgets.json')));
+
+app.post('/api/budgets', (req, res) => {
+  const budgets = req.body || [];
+  writeJSON('budgets.json', budgets);
+  res.json(budgets);
+});
+
 // --- Serve static files ---
 if (existsSync(STATIC_DIR)) {
   app.use(express.static(STATIC_DIR));

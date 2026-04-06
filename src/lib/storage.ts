@@ -3,6 +3,40 @@ import { parseSepaFields } from './parsers/abn';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
+// --- Save error tracking ---
+type SaveErrorListener = (msg: string) => void;
+const _errorListeners = new Set<SaveErrorListener>();
+export function onSaveError(listener: SaveErrorListener) {
+  _errorListeners.add(listener);
+  return () => { _errorListeners.delete(listener); };
+}
+function notifySaveError(msg: string) {
+  _errorListeners.forEach(fn => fn(msg));
+}
+
+// Safe localStorage write: catches QuotaExceededError and evicts largest key if needed
+function safeLocalSet(key: string, data: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'QuotaExceededError') {
+      // Evict the largest vault_ key and retry once
+      let largest = '', largestSize = 0;
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k?.startsWith('vault_')) {
+          const size = localStorage.getItem(k)?.length ?? 0;
+          if (size > largestSize) { largest = k; largestSize = size; }
+        }
+      }
+      if (largest && largest !== key) {
+        localStorage.removeItem(largest);
+        try { localStorage.setItem(key, JSON.stringify(data)); } catch { /* give up */ }
+      }
+    }
+  }
+}
+
 // Try API first, fall back to localStorage
 async function apiGet<T>(path: string, fallback: T): Promise<T> {
   try {
@@ -25,9 +59,10 @@ async function apiPost<T>(path: string, body: unknown): Promise<T> {
     });
     if (!res.ok) throw new Error(res.statusText);
     return await res.json();
-  } catch {
+  } catch (err) {
+    notifySaveError(`Opslaan mislukt (${path}) — data is lokaal bewaard`);
     const key = path.replace(/\//g, '');
-    localStorage.setItem('vault_' + key, JSON.stringify(body));
+    safeLocalSet('vault_' + key, body);
     return body as T;
   }
 }
@@ -41,9 +76,10 @@ async function apiPut<T>(path: string, body: unknown): Promise<T> {
     });
     if (!res.ok) throw new Error(res.statusText);
     return await res.json();
-  } catch {
+  } catch (err) {
+    notifySaveError(`Opslaan mislukt (${path}) — data is lokaal bewaard`);
     const key = path.replace(/\//g, '');
-    localStorage.setItem('vault_' + key, JSON.stringify(body));
+    safeLocalSet('vault_' + key, body);
     return body as T;
   }
 }
@@ -72,13 +108,13 @@ export async function initStorage(): Promise<void> {
   const cleaned = cleanRawSepaNames(_transactions);
   if (cleaned !== _transactions) {
     _transactions = cleaned;
-    localStorage.setItem('vault_transactions', JSON.stringify(_transactions));
+    safeLocalSet('vault_transactions', _transactions);
   }
   // Auto-detect internal transfers and persist if anything changed
   const detected = detectInternalTransfers(_transactions, _accounts);
   if (detected.some((tx, i) => tx.isInternal !== _transactions[i].isInternal)) {
     _transactions = detected;
-    localStorage.setItem('vault_transactions', JSON.stringify(_transactions));
+    safeLocalSet('vault_transactions', _transactions);
   } else {
     _transactions = detected;
   }
@@ -137,20 +173,20 @@ export const storage = {
   getTransactions: () => _transactions,
   setTransactions: (txs: Transaction[]) => {
     _transactions = txs;
-    apiPut('/transactions', txs).catch(console.error);
-    localStorage.setItem('vault_transactions', JSON.stringify(txs));
+    apiPut('/transactions', txs).catch(() => {});
+    safeLocalSet('vault_transactions', txs);
   },
   updateTransaction: (id: string, updates: Partial<Transaction>) => {
     _transactions = _transactions.map(t => t.id === id ? { ...t, ...updates } : t);
-    apiPut('/transactions', _transactions).catch(console.error);
-    localStorage.setItem('vault_transactions', JSON.stringify(_transactions));
+    apiPut('/transactions', _transactions).catch(() => {});
+    safeLocalSet('vault_transactions', _transactions);
   },
   addTransactions: (txs: Transaction[]) => {
     const ids = new Set(_transactions.map(t => t.id));
     const newOnes = txs.filter(t => !ids.has(t.id));
     _transactions = detectInternalTransfers([..._transactions, ...newOnes], _accounts);
-    apiPost('/transactions', _transactions).catch(console.error);
-    localStorage.setItem('vault_transactions', JSON.stringify(_transactions));
+    apiPut('/transactions', _transactions).catch(() => {});
+    safeLocalSet('vault_transactions', _transactions);
   },
 
   getAccounts: () => _accounts,
@@ -158,46 +194,46 @@ export const storage = {
     const idx = _accounts.findIndex(a => a.id === acc.id);
     if (idx >= 0) _accounts[idx] = acc;
     else _accounts.push(acc);
-    apiPost('/accounts', _accounts).catch(console.error);
-    localStorage.setItem('vault_accounts', JSON.stringify(_accounts));
+    apiPost('/accounts', _accounts).catch(() => {});
+    safeLocalSet('vault_accounts', _accounts);
   },
 
   getRules: () => _rules,
   setRules: (rules: Rule[]) => {
     _rules = rules;
-    apiPost('/rules', rules).catch(console.error);
-    localStorage.setItem('vault_rules', JSON.stringify(rules));
+    apiPost('/rules', rules).catch(() => {});
+    safeLocalSet('vault_rules', rules);
   },
 
   getAssets: () => _assets,
   setAssets: (assets: Asset[]) => {
     _assets = assets;
-    apiPost('/assets', assets).catch(console.error);
-    localStorage.setItem('vault_assets', JSON.stringify(assets));
+    apiPost('/assets', assets).catch(() => {});
+    safeLocalSet('vault_assets', assets);
   },
 
   getBudgets: () => _budgets,
   setBudgets: (budgets: Budget[]) => {
     _budgets = budgets;
-    apiPost('/budgets', budgets).catch(console.error);
-    localStorage.setItem('vault_budgets', JSON.stringify(budgets));
+    apiPost('/budgets', budgets).catch(() => {});
+    safeLocalSet('vault_budgets', budgets);
   },
 
   getProperties: () => _properties,
   setProperties: (properties: Property[]) => {
     _properties = properties;
-    apiPost('/properties', properties).catch(console.error);
-    localStorage.setItem('vault_properties', JSON.stringify(properties));
+    apiPost('/properties', properties).catch(() => {});
+    safeLocalSet('vault_properties', properties);
   },
 
   /** Clear all transactions and accounts (keeps rules, assets, budgets) */
   clearTransactionsAndAccounts: () => {
     _transactions = [];
     _accounts = [];
-    apiPut('/transactions', []).catch(console.error);
-    apiPost('/accounts', []).catch(console.error);
-    localStorage.setItem('vault_transactions', JSON.stringify([]));
-    localStorage.setItem('vault_accounts', JSON.stringify([]));
+    apiPut('/transactions', []).catch(() => {});
+    apiPost('/accounts', []).catch(() => {});
+    safeLocalSet('vault_transactions', []);
+    safeLocalSet('vault_accounts', []);
   },
 
   /** Clear all data except rules (transactions, accounts, assets, budgets) */
@@ -207,16 +243,16 @@ export const storage = {
     _assets = [];
     _budgets = [];
     _properties = [];
-    apiPut('/transactions', []).catch(console.error);
-    apiPost('/accounts', []).catch(console.error);
-    apiPost('/assets', []).catch(console.error);
-    apiPost('/budgets', []).catch(console.error);
-    apiPost('/properties', []).catch(console.error);
-    localStorage.setItem('vault_transactions', JSON.stringify([]));
-    localStorage.setItem('vault_accounts', JSON.stringify([]));
-    localStorage.setItem('vault_assets', JSON.stringify([]));
-    localStorage.setItem('vault_budgets', JSON.stringify([]));
-    localStorage.setItem('vault_properties', JSON.stringify([]));
+    apiPut('/transactions', []).catch(() => {});
+    apiPost('/accounts', []).catch(() => {});
+    apiPost('/assets', []).catch(() => {});
+    apiPost('/budgets', []).catch(() => {});
+    apiPost('/properties', []).catch(() => {});
+    safeLocalSet('vault_transactions', []);
+    safeLocalSet('vault_accounts', []);
+    safeLocalSet('vault_assets', []);
+    safeLocalSet('vault_budgets', []);
+    safeLocalSet('vault_properties', []);
   },
 
   /** Re-detect internal transfers based on current accounts */
@@ -225,8 +261,8 @@ export const storage = {
     const changed = updated.some((tx, i) => tx.isInternal !== _transactions[i].isInternal);
     if (changed) {
       _transactions = updated;
-      apiPut('/transactions', _transactions).catch(console.error);
-      localStorage.setItem('vault_transactions', JSON.stringify(_transactions));
+      apiPut('/transactions', _transactions).catch(() => {});
+      safeLocalSet('vault_transactions', _transactions);
     }
   },
 
@@ -240,19 +276,19 @@ export const storage = {
     settings: _settings,
   }),
   importAll: (data: { transactions?: Transaction[]; accounts?: Account[]; rules?: Rule[]; assets?: Asset[]; budgets?: Budget[]; properties?: Property[]; settings?: Record<string, unknown> }) => {
-    if (data.transactions) { _transactions = data.transactions; apiPut('/transactions', data.transactions).catch(console.error); }
-    if (data.accounts) { _accounts = data.accounts; apiPost('/accounts', data.accounts).catch(console.error); }
-    if (data.rules) { _rules = data.rules; apiPost('/rules', data.rules).catch(console.error); }
-    if (data.assets) { _assets = data.assets; apiPost('/assets', data.assets).catch(console.error); }
-    if (data.budgets) { _budgets = data.budgets; apiPost('/budgets', data.budgets).catch(console.error); }
-    if (data.properties) { _properties = data.properties; apiPost('/properties', data.properties).catch(console.error); }
-    if (data.settings) { _settings = data.settings; apiPost('/settings', data.settings).catch(console.error); }
-    localStorage.setItem('vault_transactions', JSON.stringify(_transactions));
-    localStorage.setItem('vault_accounts', JSON.stringify(_accounts));
-    localStorage.setItem('vault_rules', JSON.stringify(_rules));
-    localStorage.setItem('vault_assets', JSON.stringify(_assets));
-    localStorage.setItem('vault_budgets', JSON.stringify(_budgets));
-    localStorage.setItem('vault_properties', JSON.stringify(_properties));
+    if (data.transactions) { _transactions = data.transactions; apiPut('/transactions', data.transactions).catch(() => {}); }
+    if (data.accounts) { _accounts = data.accounts; apiPost('/accounts', data.accounts).catch(() => {}); }
+    if (data.rules) { _rules = data.rules; apiPost('/rules', data.rules).catch(() => {}); }
+    if (data.assets) { _assets = data.assets; apiPost('/assets', data.assets).catch(() => {}); }
+    if (data.budgets) { _budgets = data.budgets; apiPost('/budgets', data.budgets).catch(() => {}); }
+    if (data.properties) { _properties = data.properties; apiPost('/properties', data.properties).catch(() => {}); }
+    if (data.settings) { _settings = data.settings; apiPost('/settings', data.settings).catch(() => {}); }
+    safeLocalSet('vault_transactions', _transactions);
+    safeLocalSet('vault_accounts', _accounts);
+    safeLocalSet('vault_rules', _rules);
+    safeLocalSet('vault_assets', _assets);
+    safeLocalSet('vault_budgets', _budgets);
+    safeLocalSet('vault_properties', _properties);
   },
 };
 

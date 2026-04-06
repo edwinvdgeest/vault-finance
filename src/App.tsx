@@ -7,6 +7,7 @@ import Settings from './pages/Settings';
 import Calendar from './pages/Calendar';
 import Projections from './pages/Projections';
 import Taxes from './pages/Taxes';
+import SaveErrorToast from './components/SaveErrorToast';
 
 export default function App() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </Layout>
+      <SaveErrorToast />
     </BrowserRouter>
   );
 }

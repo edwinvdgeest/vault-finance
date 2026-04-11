@@ -8,22 +8,32 @@ import Calendar from './pages/Calendar';
 import Projections from './pages/Projections';
 import Taxes from './pages/Taxes';
 import SaveErrorToast from './components/SaveErrorToast';
+import { WorkspaceProvider, useWorkspace } from './contexts/WorkspaceContext';
+
+function AppRoutes() {
+  const { workspace } = useWorkspace();
+  return (
+    <Routes key={workspace}>
+      <Route path="/" element={<Dashboard />} />
+      <Route path="/transactions" element={<Transactions />} />
+      <Route path="/calendar" element={<Calendar />} />
+      <Route path="/projections" element={<Projections />} />
+      <Route path="/taxes" element={<Taxes />} />
+      <Route path="/import" element={<Import />} />
+      <Route path="/settings" element={<Settings />} />
+    </Routes>
+  );
+}
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <Layout>
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/transactions" element={<Transactions />} />
-          <Route path="/calendar" element={<Calendar />} />
-          <Route path="/projections" element={<Projections />} />
-          <Route path="/taxes" element={<Taxes />} />
-          <Route path="/import" element={<Import />} />
-          <Route path="/settings" element={<Settings />} />
-        </Routes>
-      </Layout>
-      <SaveErrorToast />
-    </BrowserRouter>
+    <WorkspaceProvider>
+      <BrowserRouter>
+        <Layout>
+          <AppRoutes />
+        </Layout>
+        <SaveErrorToast />
+      </BrowserRouter>
+    </WorkspaceProvider>
   );
 }

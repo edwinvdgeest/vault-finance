@@ -1,4 +1,5 @@
 import { NavLink } from 'react-router-dom';
+import WorkspaceSwitcher from './WorkspaceSwitcher';
 
 function IconGrid() {
   return (
@@ -137,6 +138,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               </NavLink>
             ))}
           </nav>
+
+          {/* Workspace switcher — pushed to the right */}
+          <div style={{ marginLeft: 'auto' }}>
+            <WorkspaceSwitcher />
+          </div>
         </div>
       </header>
 

@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { storage } from '../lib/storage';
 import { formatCurrency, formatDate } from '../lib/utils';
-import { CATEGORIES } from '../types';
+import { getCategories } from '../lib/categories';
 import type { Transaction } from '../types';
 
 const inputStyle: React.CSSProperties = {
@@ -290,7 +290,7 @@ export default function Transactions() {
   const allCategories = useMemo(() => {
     const fromRules = storage.getRules().map(r => r.category);
     const fromTransactions = transactions.map(tx => tx.category);
-    return [...new Set([...CATEGORIES, ...fromTransactions, ...fromRules])]
+    return [...new Set([...getCategories(), ...fromTransactions, ...fromRules])]
       .filter(Boolean)
       .sort((a, b) => a.localeCompare(b, 'nl'));
   }, [transactions.length]);

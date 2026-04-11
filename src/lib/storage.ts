@@ -3,6 +3,37 @@ import { parseSepaFields } from './parsers/abn';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
+// --- Workspace state ---
+export interface WorkspaceDescriptor {
+  slug: string;
+  label: string;
+  accent: string;
+}
+
+const ACTIVE_WS_KEY = 'vault_active_workspace';
+let _currentWorkspace: string = (typeof localStorage !== 'undefined' && localStorage.getItem(ACTIVE_WS_KEY)) || 'personal';
+
+export function getCurrentWorkspace(): string {
+  return _currentWorkspace;
+}
+
+export async function listWorkspaces(): Promise<WorkspaceDescriptor[]> {
+  try {
+    const res = await fetch(API_BASE + '/api/workspaces');
+    if (!res.ok) throw new Error(res.statusText);
+    return await res.json();
+  } catch {
+    return [
+      { slug: 'personal', label: 'Privé', accent: '#8b5cf6' },
+      { slug: 'holding', label: 'Unleashing Energy', accent: '#f59e0b' },
+    ];
+  }
+}
+
+function wsKey(key: string): string {
+  return `vault_${_currentWorkspace}_${key}`;
+}
+
 // --- Save error tracking ---
 type SaveErrorListener = (msg: string) => void;
 const _errorListeners = new Set<SaveErrorListener>();
@@ -37,22 +68,27 @@ function safeLocalSet(key: string, data: unknown) {
   }
 }
 
+// Build API URL scoped to the current workspace.
+function apiUrl(path: string): string {
+  return `${API_BASE}/api/ws/${_currentWorkspace}${path}`;
+}
+
 // Try API first, fall back to localStorage
 async function apiGet<T>(path: string, fallback: T): Promise<T> {
   try {
-    const res = await fetch(API_BASE + '/api' + path);
+    const res = await fetch(apiUrl(path));
     if (!res.ok) throw new Error(res.statusText);
     return await res.json();
   } catch {
     const key = path.replace(/\//g, '');
-    const data = localStorage.getItem('vault_' + key);
+    const data = localStorage.getItem(wsKey(key));
     return data ? JSON.parse(data) : fallback;
   }
 }
 
 async function apiPost<T>(path: string, body: unknown): Promise<T> {
   try {
-    const res = await fetch(API_BASE + '/api' + path, {
+    const res = await fetch(apiUrl(path), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -62,14 +98,14 @@ async function apiPost<T>(path: string, body: unknown): Promise<T> {
   } catch (err) {
     notifySaveError(`Opslaan mislukt (${path}) — data is lokaal bewaard`);
     const key = path.replace(/\//g, '');
-    safeLocalSet('vault_' + key, body);
+    safeLocalSet(wsKey(key), body);
     return body as T;
   }
 }
 
 async function apiPut<T>(path: string, body: unknown): Promise<T> {
   try {
-    const res = await fetch(API_BASE + '/api' + path, {
+    const res = await fetch(apiUrl(path), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -79,7 +115,7 @@ async function apiPut<T>(path: string, body: unknown): Promise<T> {
   } catch (err) {
     notifySaveError(`Opslaan mislukt (${path}) — data is lokaal bewaard`);
     const key = path.replace(/\//g, '');
-    safeLocalSet('vault_' + key, body);
+    safeLocalSet(wsKey(key), body);
     return body as T;
   }
 }
@@ -92,10 +128,10 @@ let _assets: Asset[] = [];
 let _budgets: Budget[] = [];
 let _properties: Property[] = [];
 let _settings: Record<string, unknown> = {};
-let _loaded = false;
+let _loadedFor: string | null = null;
 
 export async function initStorage(): Promise<void> {
-  if (_loaded) return;
+  if (_loadedFor === _currentWorkspace) return;
   _transactions = await apiGet('/transactions', []);
   _accounts = await apiGet('/accounts', []);
   _rules = await apiGet('/rules', []);
@@ -103,21 +139,41 @@ export async function initStorage(): Promise<void> {
   _budgets = await apiGet('/budgets', []);
   _properties = await apiGet('/properties', []);
   _settings = await apiGet('/settings', {});
-  _loaded = true;
+  _loadedFor = _currentWorkspace;
   // Clean up raw SEPA names from ABN imports
   const cleaned = cleanRawSepaNames(_transactions);
   if (cleaned !== _transactions) {
     _transactions = cleaned;
-    safeLocalSet('vault_transactions', _transactions);
+    safeLocalSet(wsKey('transactions'), _transactions);
   }
   // Auto-detect internal transfers and persist if anything changed
   const detected = detectInternalTransfers(_transactions, _accounts);
   if (detected.some((tx, i) => tx.isInternal !== _transactions[i].isInternal)) {
     _transactions = detected;
-    safeLocalSet('vault_transactions', _transactions);
+    safeLocalSet(wsKey('transactions'), _transactions);
   } else {
     _transactions = detected;
   }
+}
+
+/**
+ * Switch to another workspace. Clears caches and reloads data from the
+ * new workspace. React components should remount (e.g. via `key={workspace}`)
+ * to pick up the new data.
+ */
+export async function setWorkspace(ws: string): Promise<void> {
+  if (ws === _currentWorkspace) return;
+  _currentWorkspace = ws;
+  _transactions = [];
+  _accounts = [];
+  _rules = [];
+  _assets = [];
+  _budgets = [];
+  _properties = [];
+  _settings = {};
+  _loadedFor = null;
+  try { localStorage.setItem(ACTIVE_WS_KEY, ws); } catch { /* ignore */ }
+  await initStorage();
 }
 
 /** Clean up raw SEPA names on existing transactions */
@@ -174,19 +230,19 @@ export const storage = {
   setTransactions: (txs: Transaction[]) => {
     _transactions = txs;
     apiPut('/transactions', txs).catch(() => {});
-    safeLocalSet('vault_transactions', txs);
+    safeLocalSet(wsKey('transactions'), txs);
   },
   updateTransaction: (id: string, updates: Partial<Transaction>) => {
     _transactions = _transactions.map(t => t.id === id ? { ...t, ...updates } : t);
     apiPut('/transactions', _transactions).catch(() => {});
-    safeLocalSet('vault_transactions', _transactions);
+    safeLocalSet(wsKey('transactions'), _transactions);
   },
   addTransactions: (txs: Transaction[]) => {
     const ids = new Set(_transactions.map(t => t.id));
     const newOnes = txs.filter(t => !ids.has(t.id));
     _transactions = detectInternalTransfers([..._transactions, ...newOnes], _accounts);
     apiPut('/transactions', _transactions).catch(() => {});
-    safeLocalSet('vault_transactions', _transactions);
+    safeLocalSet(wsKey('transactions'), _transactions);
   },
 
   getAccounts: () => _accounts,
@@ -195,35 +251,35 @@ export const storage = {
     if (idx >= 0) _accounts[idx] = acc;
     else _accounts.push(acc);
     apiPost('/accounts', _accounts).catch(() => {});
-    safeLocalSet('vault_accounts', _accounts);
+    safeLocalSet(wsKey('accounts'), _accounts);
   },
 
   getRules: () => _rules,
   setRules: (rules: Rule[]) => {
     _rules = rules;
     apiPost('/rules', rules).catch(() => {});
-    safeLocalSet('vault_rules', rules);
+    safeLocalSet(wsKey('rules'), rules);
   },
 
   getAssets: () => _assets,
   setAssets: (assets: Asset[]) => {
     _assets = assets;
     apiPost('/assets', assets).catch(() => {});
-    safeLocalSet('vault_assets', assets);
+    safeLocalSet(wsKey('assets'), assets);
   },
 
   getBudgets: () => _budgets,
   setBudgets: (budgets: Budget[]) => {
     _budgets = budgets;
     apiPost('/budgets', budgets).catch(() => {});
-    safeLocalSet('vault_budgets', budgets);
+    safeLocalSet(wsKey('budgets'), budgets);
   },
 
   getProperties: () => _properties,
   setProperties: (properties: Property[]) => {
     _properties = properties;
     apiPost('/properties', properties).catch(() => {});
-    safeLocalSet('vault_properties', properties);
+    safeLocalSet(wsKey('properties'), properties);
   },
 
   /** Clear all transactions and accounts (keeps rules, assets, budgets) */
@@ -232,8 +288,8 @@ export const storage = {
     _accounts = [];
     apiPut('/transactions', []).catch(() => {});
     apiPost('/accounts', []).catch(() => {});
-    safeLocalSet('vault_transactions', []);
-    safeLocalSet('vault_accounts', []);
+    safeLocalSet(wsKey('transactions'), []);
+    safeLocalSet(wsKey('accounts'), []);
   },
 
   /** Clear all data except rules (transactions, accounts, assets, budgets) */
@@ -248,11 +304,11 @@ export const storage = {
     apiPost('/assets', []).catch(() => {});
     apiPost('/budgets', []).catch(() => {});
     apiPost('/properties', []).catch(() => {});
-    safeLocalSet('vault_transactions', []);
-    safeLocalSet('vault_accounts', []);
-    safeLocalSet('vault_assets', []);
-    safeLocalSet('vault_budgets', []);
-    safeLocalSet('vault_properties', []);
+    safeLocalSet(wsKey('transactions'), []);
+    safeLocalSet(wsKey('accounts'), []);
+    safeLocalSet(wsKey('assets'), []);
+    safeLocalSet(wsKey('budgets'), []);
+    safeLocalSet(wsKey('properties'), []);
   },
 
   /** Re-detect internal transfers based on current accounts */
@@ -262,7 +318,7 @@ export const storage = {
     if (changed) {
       _transactions = updated;
       apiPut('/transactions', _transactions).catch(() => {});
-      safeLocalSet('vault_transactions', _transactions);
+      safeLocalSet(wsKey('transactions'), _transactions);
     }
   },
 
@@ -283,12 +339,12 @@ export const storage = {
     if (data.budgets) { _budgets = data.budgets; apiPost('/budgets', data.budgets).catch(() => {}); }
     if (data.properties) { _properties = data.properties; apiPost('/properties', data.properties).catch(() => {}); }
     if (data.settings) { _settings = data.settings; apiPost('/settings', data.settings).catch(() => {}); }
-    safeLocalSet('vault_transactions', _transactions);
-    safeLocalSet('vault_accounts', _accounts);
-    safeLocalSet('vault_rules', _rules);
-    safeLocalSet('vault_assets', _assets);
-    safeLocalSet('vault_budgets', _budgets);
-    safeLocalSet('vault_properties', _properties);
+    safeLocalSet(wsKey('transactions'), _transactions);
+    safeLocalSet(wsKey('accounts'), _accounts);
+    safeLocalSet(wsKey('rules'), _rules);
+    safeLocalSet(wsKey('assets'), _assets);
+    safeLocalSet(wsKey('budgets'), _budgets);
+    safeLocalSet(wsKey('properties'), _properties);
   },
 };
 

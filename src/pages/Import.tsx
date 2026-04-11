@@ -5,6 +5,7 @@ import { parseAbnTxt } from '../lib/parsers/abn';
 import { storage } from '../lib/storage';
 import { deduplicate, formatCurrency, formatDate } from '../lib/utils';
 import { getDefaultRulesWithIds } from '../lib/categorizer';
+import { useWorkspace } from '../contexts/WorkspaceContext';
 import type { Transaction, BankType } from '../types';
 
 const BANK_LABELS: Record<string, string> = {
@@ -20,6 +21,8 @@ function daysSince(dateStr: string): number {
 }
 
 export default function Import() {
+  const { workspaces, workspace } = useWorkspace();
+  const wsDescriptor = workspaces.find(w => w.slug === workspace);
   const [bank, setBank] = useState<BankType>('bunq');
   const [dragging, setDragging] = useState(false);
   const [preview, setPreview] = useState<Transaction[]>([]);
@@ -143,6 +146,28 @@ export default function Import() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', maxWidth: 800 }}>
+      {/* Workspace banner — prevents importing into the wrong workspace */}
+      {wsDescriptor && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.625rem',
+            padding: '0.75rem 1rem',
+            borderRadius: '0.625rem',
+            background: `${wsDescriptor.accent}14`,
+            border: `1px solid ${wsDescriptor.accent}55`,
+            fontSize: '0.875rem',
+          }}
+        >
+          <span style={{ width: 10, height: 10, borderRadius: '50%', background: wsDescriptor.accent, flexShrink: 0 }} />
+          <span style={{ color: 'rgba(255,255,255,0.75)' }}>
+            Importeert naar workspace:{' '}
+            <strong style={{ color: 'white' }}>{wsDescriptor.label}</strong>
+          </span>
+        </div>
+      )}
+
       {/* Per-account import status */}
       {accountStatus.length > 0 && (
         <div className="glass-card">

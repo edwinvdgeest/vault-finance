@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { storage } from '../lib/storage';
 import { getDefaultRulesWithIds, categorize, getRuleConflicts } from '../lib/categorizer';
 import { formatCurrency } from '../lib/utils';
-import { CATEGORIES } from '../types';
+import { getCategories } from '../lib/categories';
 import type { Asset, Rule, Account, Budget, Property } from '../types';
 import { getMonthlyPayment, getPropertyEquityAt } from '../lib/property';
 
@@ -54,7 +54,7 @@ export default function Settings() {
     return stored.length > 0 ? stored : getDefaultRulesWithIds();
   });
   const [newPattern, setNewPattern] = useState('');
-  const [newCategory, setNewCategory] = useState<string>(CATEGORIES[0]);
+  const [newCategory, setNewCategory] = useState<string>(getCategories()[0]);
   const [editingRule, setEditingRule] = useState<{ id: string; pattern: string; category: string } | null>(null);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
 
@@ -775,7 +775,7 @@ export default function Settings() {
             onChange={e => setNewBudgetCategory(e.target.value)}
           >
             <option value="">Categorie kiezen...</option>
-            {CATEGORIES.filter(c => !budgets.some(b => b.category === c) && c !== 'Overboekingen' && c !== 'Inkomen').map(c => (
+            {getCategories().filter(c => !budgets.some(b => b.category === c) && c !== 'Overboekingen' && c !== 'Inkomen').map(c => (
               <option key={c} value={c}>{c}</option>
             ))}
           </select>
@@ -815,7 +815,7 @@ export default function Settings() {
             value={newCategory}
             onChange={e => setNewCategory(e.target.value)}
           >
-            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+            {getCategories().map(c => <option key={c} value={c}>{c}</option>)}
           </select>
           <button
             className="glass-button"
@@ -974,7 +974,7 @@ export default function Settings() {
                                   value={editingRule.category}
                                   onChange={e => setEditingRule({ ...editingRule, category: e.target.value })}
                                 >
-                                  {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                                  {getCategories().map(c => <option key={c} value={c}>{c}</option>)}
                                 </select>
                                 <button
                                   onClick={commitEditRule}

@@ -63,30 +63,58 @@ export interface Budget {
 export type BankType = 'bunq' | 'triodos' | 'abn';
 export type PeriodFilter = 'this-month' | 'last-month' | 'quarter' | 'year' | 'custom';
 
-export const CATEGORIES = [
-  'Boodschappen',
-  'Auto',
-  'Transport',
-  'Sport & Gezondheid',
-  'Abonnementen',
-  'Wonen',
-  'Horeca',
-  'Bank & Rente',
-  'Overboekingen',
-  'Inkomen',
-  'Verzekeringen',
-  'Zorg & Medisch',
-  'Internet & Telecom',
-  'Kinderopvang',
-  'Kleding & Mode',
-  'Vakantie & Reizen',
-  'Cadeaus & Shopping',
-  'Persoonlijke verzorging',
-  'Belastingen',
-  'Tuin & Huishouden',
-  'Donaties',
-  'Parkeren',
-  'Overig',
-] as const;
+export const CATEGORY_SETS = {
+  personal: [
+    'Boodschappen',
+    'Auto',
+    'Transport',
+    'Sport & Gezondheid',
+    'Abonnementen',
+    'Wonen',
+    'Horeca',
+    'Bank & Rente',
+    'Overboekingen',
+    'Inkomen',
+    'Verzekeringen',
+    'Zorg & Medisch',
+    'Internet & Telecom',
+    'Kinderopvang',
+    'Kleding & Mode',
+    'Vakantie & Reizen',
+    'Cadeaus & Shopping',
+    'Persoonlijke verzorging',
+    'Belastingen',
+    'Tuin & Huishouden',
+    'Donaties',
+    'Parkeren',
+    'Overig',
+  ],
+  holding: [
+    'Omzet',
+    'Managementfee',
+    'Loonheffing',
+    'DGA-salaris',
+    'Dividend',
+    'Zakelijke kosten',
+    'BTW',
+    'VPB',
+    'Rente & bank',
+    'Verzekeringen',
+    'Abonnementen',
+    'Reiskosten',
+    'Representatie',
+    'Advieskosten',
+    'Overboekingen',
+    'Overig',
+  ],
+} as const;
 
-export type Category = typeof CATEGORIES[number];
+export type Workspace = keyof typeof CATEGORY_SETS;
+
+/**
+ * Backwards-compatibility export. Prefer `getCategories()` from
+ * `src/lib/categories.ts` which is workspace-aware.
+ */
+export const CATEGORIES = CATEGORY_SETS.personal;
+
+export type Category = string;

@@ -60,6 +60,31 @@ export interface Budget {
   monthlyLimit: number;
 }
 
+export type ScenarioEventKind = 'oneOff' | 'recurring';
+
+export interface ScenarioEvent {
+  id: string;
+  label: string;
+  kind: ScenarioEventKind;
+  /** negative = expense, positive = income; for 'recurring' this is the per-month amount */
+  amount: number;
+  /** 'YYYY-MM' */
+  startMonth: string;
+  /** 'YYYY-MM' (inclusive). Only for 'recurring'. */
+  endMonth?: string;
+  note?: string;
+}
+
+export interface Scenario {
+  id: string;
+  label: string;
+  description?: string;
+  events: ScenarioEvent[];
+  /** hex color for line chart legend in compare mode */
+  color?: string;
+  createdAt: string;
+}
+
 export type BankType = 'bunq' | 'triodos' | 'abn';
 export type PeriodFilter = 'this-month' | 'last-month' | 'quarter' | 'year' | 'custom';
 

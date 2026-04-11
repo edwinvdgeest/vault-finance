@@ -3,11 +3,14 @@ import {
   AreaChart, Area, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend,
 } from 'recharts';
 import { storage } from '../lib/storage';
-import { getNetWorth, getPeriodSummary, filterByPeriod } from '../lib/analytics';
+import { getNetWorth, getPeriodSummary, filterByPeriod, getRobustMonthlyNetSavings } from '../lib/analytics';
 import { formatCurrency, getPeriodDates } from '../lib/utils';
 import { runProjection, runScenarioMedian } from '../lib/projections';
 import type { ProjectionResult, LifePhase, PropertyProjection } from '../lib/projections';
+import { forecastCashflow } from '../lib/cashflow';
 import { getMonthlyPayment, getTotalPropertyEquity } from '../lib/property';
+import ScenarioEditor from '../components/ScenarioEditor';
+import type { Scenario } from '../types';
 
 const tooltipStyle = {
   background: 'rgba(15, 10, 30, 0.95)',
@@ -92,6 +95,39 @@ export default function Projections() {
 
   const [tab, setTab] = useState<Tab>('projection');
 
+  // Scenarios (what-if events)
+  const [scenariosState, setScenariosState] = useState<Scenario[]>(() => storage.getScenarios());
+  const initialSettings = storage.getSettings() as { activeScenarioId?: string | null; compareScenarioIds?: string[]; cashflowBaselineOverride?: number | null };
+  const [activeScenarioId, setActiveScenarioId] = useState<string | null>(initialSettings.activeScenarioId ?? null);
+  const [compareScenarioIds, setCompareScenarioIds] = useState<string[]>(initialSettings.compareScenarioIds ?? []);
+  const [compareMode, setCompareMode] = useState(false);
+  const [cashflowBaselineOverride, setCashflowBaselineOverride] = useState<number | null>(
+    initialSettings.cashflowBaselineOverride ?? null,
+  );
+
+  const activeScenario = scenariosState.find(s => s.id === activeScenarioId) ?? null;
+  const compareScenarios = scenariosState.filter(s => compareScenarioIds.includes(s.id));
+
+  function handleScenariosChange(next: Scenario[]) {
+    setScenariosState(next);
+    storage.setScenarios(next);
+  }
+  function handleActiveChange(id: string | null) {
+    setActiveScenarioId(id);
+    storage.updateSettings({ activeScenarioId: id });
+  }
+  function handleCompareChange(ids: string[]) {
+    setCompareScenarioIds(ids);
+    storage.updateSettings({ compareScenarioIds: ids });
+  }
+
+  const avgHistoricalSavings = useMemo(() => Math.round(getRobustMonthlyNetSavings(transactions, 12)), [transactions]);
+
+  function handleBaselineOverrideChange(v: number | null) {
+    setCashflowBaselineOverride(v);
+    storage.updateSettings({ cashflowBaselineOverride: v });
+  }
+
   const [includeProperty, setIncludeProperty] = useState(hasProperty);
 
   // Shared inputs
@@ -113,8 +149,8 @@ export default function Projections() {
   const [withdrawalRate, setWithdrawalRate] = useState(4);
   const fireNumber = Math.round((monthlyExpenses * 12) / (withdrawalRate / 100));
 
-  // Base projection params
-  const baseParams = useMemo(() => ({
+  // Base projection params (baseline — without events)
+  const baselineParams = useMemo(() => ({
     startCapital,
     monthlyContribution: monthlyContrib,
     annualReturn: annualReturn / 100,
@@ -128,24 +164,41 @@ export default function Projections() {
     property: includeProperty && aggregatedProperty ? aggregatedProperty : undefined,
   }), [startCapital, monthlyContrib, annualReturn, volatility, inflation, years, goalAmount, adjustInflation, phases, showPhases, tab, fireNumber, includeProperty, aggregatedProperty]);
 
-  // Main projection
+  // Projection params with active scenario events applied
+  const baseParams = useMemo(() => ({
+    ...baselineParams,
+    events: activeScenario?.events,
+  }), [baselineParams, activeScenario]);
+
+  // Main projection (active scenario)
   const result: ProjectionResult = useMemo(() => runProjection(baseParams), [baseParams]);
 
-  // Scenario comparison (3 scenarios: -2% return, base, +2% return)
-  const scenarios = useMemo(() => {
-    if (tab !== 'scenarios') return null;
-    const conservative = runScenarioMedian({ ...baseParams, annualReturn: Math.max(0, baseParams.annualReturn - 0.02) });
-    const normal = runScenarioMedian(baseParams);
-    const aggressive = runScenarioMedian({ ...baseParams, annualReturn: baseParams.annualReturn + 0.02 });
+  // Baseline projection (no events) — used for impact-delta + scenarios-tab overlay
+  const baselineResult: ProjectionResult = useMemo(() => {
+    if (!activeScenario && compareScenarios.length === 0) return result;
+    return runProjection(baselineParams);
+  }, [baselineParams, activeScenario, compareScenarios.length, result]);
 
-    return result.yearlyData.map((d, i) => ({
-      label: d.label,
-      year: d.year,
-      conservative: conservative[i] ?? 0,
-      normal: normal[i] ?? 0,
-      aggressive: aggressive[i] ?? 0,
+  // Short-term cashflow forecast (deterministic, 24 months)
+  const cashflow = useMemo(
+    () => forecastCashflow(transactions, accounts, activeScenario?.events ?? [], 24, cashflowBaselineOverride),
+    [transactions, accounts, activeScenario, cashflowBaselineOverride],
+  );
+
+  // Compare-mode scenario overlay (median lines per selected scenario)
+  const compareData = useMemo(() => {
+    if (tab !== 'scenarios') return null;
+    const baselineMedian = runScenarioMedian(baselineParams);
+    const scenarioSeries = compareScenarios.map(s => ({
+      scenario: s,
+      medians: runScenarioMedian({ ...baselineParams, events: s.events }),
     }));
-  }, [tab, baseParams, result.yearlyData]);
+    return baselineResult.yearlyData.map((d, i) => {
+      const row: Record<string, number | string> = { label: d.label, year: d.year, baseline: baselineMedian[i] ?? 0 };
+      for (const ss of scenarioSeries) row[ss.scenario.id] = ss.medians[i] ?? 0;
+      return row;
+    });
+  }, [tab, baselineParams, compareScenarios, baselineResult.yearlyData]);
 
   const currentYear = new Date().getFullYear();
 
@@ -183,10 +236,27 @@ export default function Projections() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
       {/* Tab navigation */}
-      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
         <button style={tabStyle('projection')} onClick={() => setTab('projection')}>Projectie</button>
         <button style={tabStyle('scenarios')} onClick={() => setTab('scenarios')}>Scenario's</button>
         <button style={tabStyle('fire')} onClick={() => setTab('fire')}>FIRE</button>
+
+        {tab === 'projection' && scenariosState.length > 0 && (
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>Actief scenario</span>
+            <select
+              value={activeScenarioId ?? ''}
+              onChange={e => handleActiveChange(e.target.value || null)}
+              className="glass-input"
+              style={{ padding: '0.35rem 0.6rem', fontSize: '0.8rem', minWidth: 180 }}
+            >
+              <option value="">— Baseline (geen events) —</option>
+              {scenariosState.map(s => (
+                <option key={s.id} value={s.id}>{s.label} ({s.events.length})</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* KPI cards */}
@@ -251,13 +321,15 @@ export default function Projections() {
       {/* Chart */}
       <div className="glass-card" style={{ padding: '1.25rem' }}>
         <p style={{ fontSize: '0.75rem', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.75rem' }}>
-          {tab === 'scenarios' ? 'Scenario vergelijking — mediaan' :
-           tab === 'fire' ? `FIRE projectie — ${formatCurrency(fireNumber)} doel` :
-           `Vermogensprojectie — 500 simulaties${adjustInflation ? ' (gecorrigeerd voor inflatie)' : ''}`}
+          {tab === 'scenarios'
+            ? (compareMode ? 'Scenario vergelijking — mediaan' : activeScenario ? `Actief scenario: ${activeScenario.label}` : 'Vermogensprojectie — baseline')
+            : tab === 'fire'
+            ? `FIRE projectie — ${formatCurrency(fireNumber)} doel`
+            : `Vermogensprojectie${activeScenario ? ` — ${activeScenario.label}` : ''} — 500 simulaties${adjustInflation ? ' (gecorrigeerd voor inflatie)' : ''}`}
         </p>
         <ResponsiveContainer width="100%" height={380}>
-          {tab === 'scenarios' && scenarios ? (
-            <LineChart data={scenarios} margin={{ top: 10, right: 10, left: 10, bottom: 5 }}>
+          {tab === 'scenarios' && compareMode && compareData ? (
+            <LineChart data={compareData} margin={{ top: 10, right: 10, left: 10, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
               <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false}
                 interval={years <= 10 ? 0 : years <= 20 ? 1 : 4} />
@@ -265,16 +337,20 @@ export default function Projections() {
                 tickFormatter={v => v >= 1000000 ? `€${(v / 1000000).toFixed(1)}M` : `€${(v / 1000).toFixed(0)}k`} />
               <Tooltip contentStyle={tooltipStyle}
                 formatter={(value, name) => {
-                  const labels: Record<string, string> = { conservative: `Conservatief (${annualReturn - 2}%)`, normal: `Normaal (${annualReturn}%)`, aggressive: `Agressief (${annualReturn + 2}%)` };
-                  return [formatCurrency(Number(value)), labels[String(name)] ?? String(name)];
+                  if (name === 'baseline') return [formatCurrency(Number(value)), 'Baseline'];
+                  const s = compareScenarios.find(x => x.id === name);
+                  return [formatCurrency(Number(value)), s?.label ?? String(name)];
                 }} />
               <Legend formatter={(name: string) => {
-                const labels: Record<string, string> = { conservative: `Conservatief (${annualReturn - 2}%)`, normal: `Normaal (${annualReturn}%)`, aggressive: `Agressief (${annualReturn + 2}%)` };
-                return labels[name] ?? name;
+                if (name === 'baseline') return 'Baseline';
+                const s = compareScenarios.find(x => x.id === name);
+                return s?.label ?? name;
               }} wrapperStyle={{ fontSize: 12, color: '#94a3b8' }} />
-              <Line type="monotone" dataKey="conservative" stroke={SCENARIO_COLORS[0]} strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="normal" stroke={SCENARIO_COLORS[1]} strokeWidth={2.5} dot={false} />
-              <Line type="monotone" dataKey="aggressive" stroke={SCENARIO_COLORS[2]} strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="baseline" stroke="#64748b" strokeWidth={2} strokeDasharray="4 4" dot={false} />
+              {compareScenarios.map((s, i) => (
+                <Line key={s.id} type="monotone" dataKey={s.id}
+                  stroke={s.color ?? SCENARIO_COLORS[i % SCENARIO_COLORS.length]} strokeWidth={2.5} dot={false} />
+              ))}
               {goalAmount > 0 && (
                 <ReferenceLine y={goalAmount} stroke="#ef4444" strokeDasharray="6 4" strokeWidth={1}
                   label={{ value: `Doel: ${formatCurrency(goalAmount)}`, fill: '#ef4444', fontSize: 10, position: 'right' }} />
@@ -333,6 +409,146 @@ export default function Projections() {
           )}
         </ResponsiveContainer>
       </div>
+
+      {/* Short-term cashflow forecast (24 months, deterministic) */}
+      {tab !== 'fire' && (
+        <div className="glass-card" style={{ padding: '1.25rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <p style={{ fontSize: '0.75rem', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0 }}>
+              Korte-termijn kasstroom — 24 mnd
+            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span style={{ fontSize: '0.7rem', color: '#64748b' }}>Baseline €</span>
+              <input
+                type="number"
+                value={Math.round(cashflow.baselineNet)}
+                step={50}
+                onChange={e => {
+                  const v = parseFloat(e.target.value);
+                  handleBaselineOverrideChange(isNaN(v) ? null : v);
+                }}
+                className="glass-input"
+                style={{ padding: '0.25rem 0.4rem', fontSize: '0.75rem', width: '6rem', textAlign: 'right' }}
+              />
+              <span style={{ fontSize: '0.7rem', color: '#64748b' }}>/mnd</span>
+              {cashflowBaselineOverride !== null && (
+                <button
+                  type="button"
+                  onClick={() => handleBaselineOverrideChange(null)}
+                  title={`Reset naar automatisch (€${avgHistoricalSavings.toLocaleString('nl-NL')}/mnd — mediaan 12 mnd)`}
+                  style={{
+                    padding: '0.2rem 0.5rem', fontSize: '0.7rem', fontWeight: 600,
+                    background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: '0.375rem', color: '#94a3b8', cursor: 'pointer', fontFamily: 'inherit',
+                  }}
+                >
+                  ↺ auto
+                </button>
+              )}
+              <span style={{ fontSize: '0.65rem', color: '#475569' }}>
+                {cashflowBaselineOverride === null ? 'mediaan 12 mnd' : 'eigen'}
+              </span>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', marginBottom: '1rem' }} className="grid-halves">
+            <div style={{ padding: '0.6rem 0.8rem', background: 'rgba(255,255,255,0.03)', borderRadius: '0.5rem', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <p style={{ fontSize: '0.65rem', color: '#94a3b8', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Minimum saldo</p>
+              <div style={{ fontSize: '1rem', fontWeight: 700, color: cashflow.minBalance < 0 ? '#ef4444' : '#cbd5e1' }}>
+                {formatCurrency(cashflow.minBalance)}
+              </div>
+            </div>
+            <div style={{ padding: '0.6rem 0.8rem', background: 'rgba(255,255,255,0.03)', borderRadius: '0.5rem', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <p style={{ fontSize: '0.65rem', color: '#94a3b8', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Event-impact (24 mnd)</p>
+              <div style={{ fontSize: '1rem', fontWeight: 700, color: cashflow.totalEventImpact < 0 ? '#f87171' : cashflow.totalEventImpact > 0 ? '#10b981' : '#cbd5e1' }}>
+                {cashflow.totalEventImpact > 0 ? '+' : ''}{formatCurrency(cashflow.totalEventImpact)}
+              </div>
+            </div>
+            <div style={{ padding: '0.6rem 0.8rem', background: 'rgba(255,255,255,0.03)', borderRadius: '0.5rem', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <p style={{ fontSize: '0.65rem', color: '#94a3b8', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Events gepland</p>
+              <div style={{ fontSize: '1rem', fontWeight: 700, color: '#cbd5e1' }}>
+                {activeScenario?.events.length ?? 0}
+              </div>
+            </div>
+          </div>
+          <ResponsiveContainer width="100%" height={220}>
+            <AreaChart data={cashflow.months} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
+              <defs>
+                <linearGradient id="cashflowGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#06b6d4" stopOpacity={0.25} />
+                  <stop offset="100%" stopColor="#06b6d4" stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+              <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} interval={1} />
+              <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false}
+                tickFormatter={v => v >= 1000 ? `€${(v / 1000).toFixed(0)}k` : `€${v}`} />
+              <Tooltip contentStyle={tooltipStyle}
+                formatter={(value, name) => {
+                  const labels: Record<string, string> = { projectedBalance: 'Met scenario', baselineBalance: 'Baseline' };
+                  return [formatCurrency(Number(value)), labels[String(name)] ?? String(name)];
+                }} />
+              <Area type="monotone" dataKey="baselineBalance" stroke="#64748b" strokeWidth={1.5} strokeDasharray="4 4" fill="none" dot={false} />
+              <Area type="monotone" dataKey="projectedBalance" stroke="#06b6d4" strokeWidth={2.5} fill="url(#cashflowGradient)" dot={false} />
+              <ReferenceLine y={0} stroke="#ef4444" strokeDasharray="2 4" strokeWidth={1} />
+              {(activeScenario?.events ?? []).map(ev => {
+                const match = cashflow.months.find(m => m.month === ev.startMonth);
+                if (!match) return null;
+                return (
+                  <ReferenceLine key={ev.id} x={match.label} stroke="#f59e0b" strokeDasharray="3 3" strokeWidth={1}
+                    label={{ value: ev.label, fill: '#f59e0b', fontSize: 9, position: 'top' }} />
+                );
+              })}
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Impact summary when an active scenario is set */}
+      {tab !== 'fire' && activeScenario && (
+        <div className="glass-card" style={{ padding: '1.25rem' }}>
+          <p style={{ fontSize: '0.75rem', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.75rem' }}>
+            Impact t.o.v. baseline
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }} className="grid-halves">
+            <div style={{ padding: '0.6rem 0.8rem', background: 'rgba(255,255,255,0.03)', borderRadius: '0.5rem', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <p style={{ fontSize: '0.65rem', color: '#94a3b8', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Δ mediaan na {years}j</p>
+              <div style={{ fontSize: '1rem', fontWeight: 700, color: result.medianFinal < baselineResult.medianFinal ? '#f87171' : '#10b981' }}>
+                {result.medianFinal - baselineResult.medianFinal >= 0 ? '+' : ''}{formatCurrency(result.medianFinal - baselineResult.medianFinal)}
+              </div>
+            </div>
+            <div style={{ padding: '0.6rem 0.8rem', background: 'rgba(255,255,255,0.03)', borderRadius: '0.5rem', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <p style={{ fontSize: '0.65rem', color: '#94a3b8', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Δ P10 na {years}j</p>
+              <div style={{ fontSize: '1rem', fontWeight: 700, color: result.p10Final < baselineResult.p10Final ? '#f87171' : '#10b981' }}>
+                {result.p10Final - baselineResult.p10Final >= 0 ? '+' : ''}{formatCurrency(result.p10Final - baselineResult.p10Final)}
+              </div>
+            </div>
+            <div style={{ padding: '0.6rem 0.8rem', background: 'rgba(255,255,255,0.03)', borderRadius: '0.5rem', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <p style={{ fontSize: '0.65rem', color: '#94a3b8', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>FIRE-jaar shift</p>
+              <div style={{ fontSize: '1rem', fontWeight: 700, color: '#cbd5e1' }}>
+                {baselineResult.fireYear && result.fireYear
+                  ? `${result.fireYear - baselineResult.fireYear >= 0 ? '+' : ''}${result.fireYear - baselineResult.fireYear} jaar`
+                  : baselineResult.fireYear && !result.fireYear
+                  ? `niet meer <${years}j`
+                  : '—'}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Scenario editor (on scenarios tab) */}
+      {tab === 'scenarios' && (
+        <ScenarioEditor
+          scenarios={scenariosState}
+          activeId={activeScenarioId}
+          compareIds={compareScenarioIds}
+          compareMode={compareMode}
+          onScenariosChange={handleScenariosChange}
+          onActiveChange={handleActiveChange}
+          onCompareChange={handleCompareChange}
+          onCompareModeChange={setCompareMode}
+        />
+      )}
 
       {/* FIRE settings */}
       {tab === 'fire' && (
@@ -454,8 +670,24 @@ export default function Projections() {
           <SliderInput label="Startkapitaal" value={startCapital} onChange={setStartCapital}
             min={0} max={2000000} step={10000} format={v => formatCurrency(v)} />
           {!showPhases && (
-            <SliderInput label="Maandelijkse inleg" value={monthlyContrib} onChange={setMonthlyContrib}
-              min={0} max={10000} step={100} format={v => formatCurrency(v)} />
+            <div>
+              <SliderInput label="Maandelijkse inleg" value={monthlyContrib} onChange={setMonthlyContrib}
+                min={0} max={10000} step={100} format={v => formatCurrency(v)} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.35rem' }}>
+                <button
+                  type="button"
+                  onClick={() => setMonthlyContrib(Math.max(0, avgHistoricalSavings))}
+                  className="glass-button"
+                  style={{ padding: '0.25rem 0.6rem', fontSize: '0.7rem', fontWeight: 600, color: '#c4b5fd', cursor: 'pointer', fontFamily: 'inherit' }}
+                  title="Mediaan over 12 mnd — robuust tegen uitschiertermaanden"
+                >
+                  Bereken uit historie (mediaan 12 mnd)
+                </button>
+                <span style={{ fontSize: '0.7rem', color: '#64748b' }}>
+                  {formatCurrency(avgHistoricalSavings)}/mnd
+                </span>
+              </div>
+            </div>
           )}
           <SliderInput label="Verwacht rendement (jaar)" value={annualReturn} onChange={setAnnualReturn}
             min={0} max={15} step={0.5} format={v => `${v}%`} />

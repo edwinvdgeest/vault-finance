@@ -227,6 +227,63 @@ export function getPeriodSummaryWithDelta(
   };
 }
 
+/**
+ * Average monthly net savings (income − expenses, excluding internal transfers)
+ * over the last N full calendar months preceding the current month. Used to
+ * auto-fill the projection's baseline monthly contribution from real history.
+ *
+ * Returns 0 when there's no data in the window. May be negative if the user
+ * spent more than they earned on average — the caller decides how to handle that.
+ */
+export function getAvgMonthlyNetSavings(transactions: Transaction[], months = 6): number {
+  if (months <= 0) return 0;
+  const now = new Date();
+  // Window: start of (currentMonth - months), end of previous full month
+  const windowStart = new Date(now.getFullYear(), now.getMonth() - months, 1);
+  const windowEnd = new Date(now.getFullYear(), now.getMonth(), 1); // exclusive
+
+  let net = 0;
+  for (const tx of transactions) {
+    if (isTransfer(tx)) continue;
+    const d = new Date(tx.date + 'T00:00:00');
+    if (d < windowStart || d >= windowEnd) continue;
+    net += tx.amount;
+  }
+  return net / months;
+}
+
+/**
+ * Robust monthly net savings: buckets transactions by calendar month over the
+ * last N full months (excluding the current partial month) and returns the
+ * MEDIAN of those monthly nets. One big outlier month (e.g. asset sale, tax
+ * refund) no longer pollutes the baseline the way a plain average does.
+ *
+ * Only months that contain at least one non-transfer transaction are counted,
+ * so a fresh import with 6 months of data gives the median of those 6 months
+ * rather than diluting with empty months.
+ */
+export function getRobustMonthlyNetSavings(transactions: Transaction[], months = 12): number {
+  if (months <= 0) return 0;
+  const now = new Date();
+  const startD = new Date(now.getFullYear(), now.getMonth() - months, 1);
+  const startYM = `${startD.getFullYear()}-${String(startD.getMonth() + 1).padStart(2, '0')}`;
+  const currentYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+  const buckets = new Map<string, number>();
+  for (const tx of transactions) {
+    if (isTransfer(tx)) continue;
+    const ym = tx.date.slice(0, 7); // 'YYYY-MM'
+    if (ym < startYM || ym >= currentYM) continue;
+    buckets.set(ym, (buckets.get(ym) ?? 0) + tx.amount);
+  }
+
+  const values = Array.from(buckets.values());
+  if (values.length === 0) return 0;
+  values.sort((a, b) => a - b);
+  const mid = Math.floor(values.length / 2);
+  return values.length % 2 === 0 ? (values[mid - 1] + values[mid]) / 2 : values[mid];
+}
+
 export function getRecurringExpenses(
   transactions: Transaction[],
 ): { name: string; avgAmount: number; months: number; category: string }[] {

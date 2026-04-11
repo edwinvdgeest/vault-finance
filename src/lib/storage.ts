@@ -1,4 +1,4 @@
-import type { Transaction, Account, Rule, Asset, Budget, Property } from '../types';
+import type { Transaction, Account, Rule, Asset, Budget, Property, Scenario } from '../types';
 import { parseSepaFields } from './parsers/abn';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
@@ -127,6 +127,7 @@ let _rules: Rule[] = [];
 let _assets: Asset[] = [];
 let _budgets: Budget[] = [];
 let _properties: Property[] = [];
+let _scenarios: Scenario[] = [];
 let _settings: Record<string, unknown> = {};
 let _loadedFor: string | null = null;
 
@@ -138,6 +139,7 @@ export async function initStorage(): Promise<void> {
   _assets = await apiGet('/assets', []);
   _budgets = await apiGet('/budgets', []);
   _properties = await apiGet('/properties', []);
+  _scenarios = await apiGet('/scenarios', []);
   _settings = await apiGet('/settings', {});
   _loadedFor = _currentWorkspace;
   // Clean up raw SEPA names from ABN imports
@@ -170,6 +172,7 @@ export async function setWorkspace(ws: string): Promise<void> {
   _assets = [];
   _budgets = [];
   _properties = [];
+  _scenarios = [];
   _settings = {};
   _loadedFor = null;
   try { localStorage.setItem(ACTIVE_WS_KEY, ws); } catch { /* ignore */ }
@@ -282,6 +285,39 @@ export const storage = {
     safeLocalSet(wsKey('properties'), properties);
   },
 
+  getScenarios: () => _scenarios,
+  setScenarios: (scenarios: Scenario[]) => {
+    _scenarios = scenarios;
+    apiPost('/scenarios', scenarios).catch(() => {});
+    safeLocalSet(wsKey('scenarios'), scenarios);
+  },
+  upsertScenario: (scenario: Scenario) => {
+    const idx = _scenarios.findIndex(s => s.id === scenario.id);
+    const next = idx >= 0
+      ? _scenarios.map((s, i) => (i === idx ? scenario : s))
+      : [..._scenarios, scenario];
+    _scenarios = next;
+    apiPost('/scenarios', next).catch(() => {});
+    safeLocalSet(wsKey('scenarios'), next);
+  },
+  deleteScenario: (id: string) => {
+    _scenarios = _scenarios.filter(s => s.id !== id);
+    apiPost('/scenarios', _scenarios).catch(() => {});
+    safeLocalSet(wsKey('scenarios'), _scenarios);
+  },
+
+  getSettings: () => _settings,
+  setSettings: (settings: Record<string, unknown>) => {
+    _settings = settings;
+    apiPost('/settings', settings).catch(() => {});
+    safeLocalSet(wsKey('settings'), settings);
+  },
+  updateSettings: (partial: Record<string, unknown>) => {
+    _settings = { ..._settings, ...partial };
+    apiPost('/settings', _settings).catch(() => {});
+    safeLocalSet(wsKey('settings'), _settings);
+  },
+
   /** Clear all transactions and accounts (keeps rules, assets, budgets) */
   clearTransactionsAndAccounts: () => {
     _transactions = [];
@@ -292,23 +328,26 @@ export const storage = {
     safeLocalSet(wsKey('accounts'), []);
   },
 
-  /** Clear all data except rules (transactions, accounts, assets, budgets) */
+  /** Clear all data except rules (transactions, accounts, assets, budgets, scenarios) */
   clearAllData: () => {
     _transactions = [];
     _accounts = [];
     _assets = [];
     _budgets = [];
     _properties = [];
+    _scenarios = [];
     apiPut('/transactions', []).catch(() => {});
     apiPost('/accounts', []).catch(() => {});
     apiPost('/assets', []).catch(() => {});
     apiPost('/budgets', []).catch(() => {});
     apiPost('/properties', []).catch(() => {});
+    apiPost('/scenarios', []).catch(() => {});
     safeLocalSet(wsKey('transactions'), []);
     safeLocalSet(wsKey('accounts'), []);
     safeLocalSet(wsKey('assets'), []);
     safeLocalSet(wsKey('budgets'), []);
     safeLocalSet(wsKey('properties'), []);
+    safeLocalSet(wsKey('scenarios'), []);
   },
 
   /** Re-detect internal transfers based on current accounts */
@@ -329,15 +368,17 @@ export const storage = {
     assets: _assets,
     budgets: _budgets,
     properties: _properties,
+    scenarios: _scenarios,
     settings: _settings,
   }),
-  importAll: (data: { transactions?: Transaction[]; accounts?: Account[]; rules?: Rule[]; assets?: Asset[]; budgets?: Budget[]; properties?: Property[]; settings?: Record<string, unknown> }) => {
+  importAll: (data: { transactions?: Transaction[]; accounts?: Account[]; rules?: Rule[]; assets?: Asset[]; budgets?: Budget[]; properties?: Property[]; scenarios?: Scenario[]; settings?: Record<string, unknown> }) => {
     if (data.transactions) { _transactions = data.transactions; apiPut('/transactions', data.transactions).catch(() => {}); }
     if (data.accounts) { _accounts = data.accounts; apiPost('/accounts', data.accounts).catch(() => {}); }
     if (data.rules) { _rules = data.rules; apiPost('/rules', data.rules).catch(() => {}); }
     if (data.assets) { _assets = data.assets; apiPost('/assets', data.assets).catch(() => {}); }
     if (data.budgets) { _budgets = data.budgets; apiPost('/budgets', data.budgets).catch(() => {}); }
     if (data.properties) { _properties = data.properties; apiPost('/properties', data.properties).catch(() => {}); }
+    if (data.scenarios) { _scenarios = data.scenarios; apiPost('/scenarios', data.scenarios).catch(() => {}); }
     if (data.settings) { _settings = data.settings; apiPost('/settings', data.settings).catch(() => {}); }
     safeLocalSet(wsKey('transactions'), _transactions);
     safeLocalSet(wsKey('accounts'), _accounts);
@@ -345,6 +386,8 @@ export const storage = {
     safeLocalSet(wsKey('assets'), _assets);
     safeLocalSet(wsKey('budgets'), _budgets);
     safeLocalSet(wsKey('properties'), _properties);
+    safeLocalSet(wsKey('scenarios'), _scenarios);
+    safeLocalSet(wsKey('settings'), _settings);
   },
 };
 

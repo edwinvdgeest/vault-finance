@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { runProjection, runScenarioMedian } from '../projections';
+import { runProjection, runScenarioMedian, monthsFromNow, eventDeltaForMonth } from '../projections';
 import type { ProjectionParams } from '../projections';
+import type { ScenarioEvent } from '../../types';
 
 const BASE_PARAMS: ProjectionParams = {
   startCapital: 50_000,
@@ -116,5 +117,113 @@ describe('runScenarioMedian', () => {
     const medians = runScenarioMedian(BASE_PARAMS);
     expect(medians).toHaveLength(11);
     expect(medians[0]).toBe(BASE_PARAMS.startCapital);
+  });
+});
+
+describe('monthsFromNow', () => {
+  it('returns 0 for the current month', () => {
+    const now = new Date(2026, 3, 11); // April 2026
+    expect(monthsFromNow('2026-04', now)).toBe(0);
+  });
+  it('returns positive offset for future months', () => {
+    const now = new Date(2026, 3, 11);
+    expect(monthsFromNow('2026-07', now)).toBe(3);
+    expect(monthsFromNow('2027-04', now)).toBe(12);
+  });
+  it('returns negative offset for past months', () => {
+    const now = new Date(2026, 3, 11);
+    expect(monthsFromNow('2026-01', now)).toBe(-3);
+    expect(monthsFromNow('2025-04', now)).toBe(-12);
+  });
+});
+
+describe('eventDeltaForMonth', () => {
+  const now = new Date(2026, 3, 1); // April 2026
+
+  it('oneOff event fires only in its month', () => {
+    const events: ScenarioEvent[] = [
+      { id: '1', label: 'Vacation', kind: 'oneOff', amount: -3000, startMonth: '2026-07' },
+    ];
+    expect(eventDeltaForMonth(events, 2, now)).toBe(0); // June
+    expect(eventDeltaForMonth(events, 3, now)).toBe(-3000); // July
+    expect(eventDeltaForMonth(events, 4, now)).toBe(0); // August
+  });
+
+  it('recurring event fires across its full window inclusive', () => {
+    const events: ScenarioEvent[] = [
+      { id: '1', label: 'Sabbatical', kind: 'recurring', amount: -4000, startMonth: '2026-06', endMonth: '2026-08' },
+    ];
+    expect(eventDeltaForMonth(events, 1, now)).toBe(0); // May
+    expect(eventDeltaForMonth(events, 2, now)).toBe(-4000); // June
+    expect(eventDeltaForMonth(events, 3, now)).toBe(-4000); // July
+    expect(eventDeltaForMonth(events, 4, now)).toBe(-4000); // August
+    expect(eventDeltaForMonth(events, 5, now)).toBe(0); // September
+  });
+
+  it('multiple events in the same month sum up', () => {
+    const events: ScenarioEvent[] = [
+      { id: '1', label: 'Vacation', kind: 'oneOff', amount: -3000, startMonth: '2026-07' },
+      { id: '2', label: 'Bonus', kind: 'oneOff', amount: 1000, startMonth: '2026-07' },
+    ];
+    expect(eventDeltaForMonth(events, 3, now)).toBe(-2000);
+  });
+
+  it('past events have no effect on future months', () => {
+    const events: ScenarioEvent[] = [
+      { id: '1', label: 'Old', kind: 'oneOff', amount: -9999, startMonth: '2025-01' },
+    ];
+    for (let m = 0; m < 24; m++) {
+      expect(eventDeltaForMonth(events, m, now)).toBe(0);
+    }
+  });
+});
+
+describe('runProjection with events', () => {
+  // Deterministic comparisons use volatility=0 so the simulation is fully predictable
+  const DETERMINISTIC: ProjectionParams = {
+    startCapital: 100_000,
+    monthlyContribution: 0,
+    annualReturn: 0,
+    annualVolatility: 0,
+    inflationRate: 0,
+    years: 2,
+    simulations: 10,
+    goalAmount: 0,
+    adjustForInflation: false,
+  };
+
+  const ym = (offset: number) => {
+    const now = new Date();
+    const d = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  };
+
+  it('one-off expense reduces final value by exactly that amount (no return)', () => {
+    const baseline = runProjection(DETERMINISTIC);
+    const withEvent = runProjection({
+      ...DETERMINISTIC,
+      events: [{ id: '1', label: 'one-off', kind: 'oneOff', amount: -10_000, startMonth: ym(6) }],
+    });
+    expect(withEvent.medianFinal).toBe(baseline.medianFinal - 10_000);
+  });
+
+  it('recurring event equivalent to reducing contribution over its window', () => {
+    // Recurring -1000/mnd for 6 months (offsets 5..10 inclusive) = total -6000
+    const withEvent = runProjection({
+      ...DETERMINISTIC,
+      monthlyContribution: 1000,
+      events: [{ id: '1', label: 'window', kind: 'recurring', amount: -1000, startMonth: ym(5), endMonth: ym(10) }],
+    });
+    // 24 months of +1000 contribution − 6 months of -1000 event = 18k net contribution
+    expect(withEvent.medianFinal).toBe(100_000 + 18_000);
+  });
+
+  it('events in the past are ignored by the engine', () => {
+    const baseline = runProjection(DETERMINISTIC);
+    const withPastEvent = runProjection({
+      ...DETERMINISTIC,
+      events: [{ id: '1', label: 'ancient', kind: 'oneOff', amount: -50_000, startMonth: '2020-01' }],
+    });
+    expect(withPastEvent.medianFinal).toBe(baseline.medianFinal);
   });
 });

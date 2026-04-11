@@ -1,9 +1,41 @@
+import type { ScenarioEvent } from '../types';
+
 /** Box-Muller transform: generate normally distributed random number */
 function randomNormal(): number {
   let u = 0, v = 0;
   while (u === 0) u = Math.random();
   while (v === 0) v = Math.random();
   return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+}
+
+/**
+ * Months elapsed from sim-start (= first day of current month) to a 'YYYY-MM' string.
+ * Negative if the target month lies in the past. Used by both the Monte Carlo engine
+ * and the short-term cashflow forecast so events line up consistently in both views.
+ */
+export function monthsFromNow(ym: string, now: Date = new Date()): number {
+  const [y, m] = ym.split('-').map(Number);
+  return (y - now.getFullYear()) * 12 + (m - 1 - now.getMonth());
+}
+
+/**
+ * Sum the event amounts that apply in a specific month offset from now.
+ * - `oneOff` events fire in the single month matching their `startMonth`.
+ * - `recurring` events fire every month from `startMonth` through `endMonth` (inclusive).
+ *   If `endMonth` is missing, the recurring event behaves as a single-month event.
+ */
+export function eventDeltaForMonth(events: ScenarioEvent[], monthOffset: number, now: Date = new Date()): number {
+  let delta = 0;
+  for (const ev of events) {
+    const start = monthsFromNow(ev.startMonth, now);
+    if (ev.kind === 'oneOff') {
+      if (monthOffset === start) delta += ev.amount;
+    } else {
+      const end = ev.endMonth ? monthsFromNow(ev.endMonth, now) : start;
+      if (monthOffset >= start && monthOffset <= end) delta += ev.amount;
+    }
+  }
+  return delta;
 }
 
 /** Calculate percentile from sorted array */
@@ -44,6 +76,7 @@ export interface ProjectionParams {
   adjustForInflation: boolean;
   phases?: LifePhase[]; // optional life phases override
   property?: PropertyProjection; // optional woning component (deterministic)
+  events?: ScenarioEvent[]; // optional scenario events, applied additively to monthly contribution
 }
 
 export interface YearlyDataPoint {
@@ -94,6 +127,7 @@ export function runProjection(params: ProjectionParams): ProjectionResult {
     adjustForInflation,
     phases,
     property,
+    events,
   } = params;
 
   const monthlyMu = annualReturn / 12;
@@ -101,6 +135,8 @@ export function runProjection(params: ProjectionParams): ProjectionResult {
   const monthlyInflation = inflationRate / 12;
   const totalMonths = years * 12;
   const hasPhases = phases && phases.length > 0;
+  const hasEvents = events && events.length > 0;
+  const simNow = new Date();
 
   // Pre-compute deterministic property schedule (same across simulations)
   const propertySchedule: { value: number; debt: number; equity: number }[] = [];
@@ -138,9 +174,11 @@ export function runProjection(params: ProjectionParams): ProjectionResult {
 
     for (let m = 1; m <= totalMonths; m++) {
       const yearOffset = Math.floor((m - 1) / 12);
-      const contrib = hasPhases
+      const baseContrib = hasPhases
         ? getPhaseContribution(yearOffset, phases!, monthlyContribution)
         : monthlyContribution;
+      const eventDelta = hasEvents ? eventDeltaForMonth(events!, m - 1, simNow) : 0;
+      const contrib = baseContrib + eventDelta;
 
       const monthReturn = monthlyMu + monthlySigma * randomNormal();
       value = value * (1 + monthReturn) + contrib;

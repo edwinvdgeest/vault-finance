@@ -18,7 +18,7 @@ const WORKSPACES = (process.env.VAULT_WORKSPACES
   ? process.env.VAULT_WORKSPACES.split(',').map(s => s.trim())
   : WORKSPACE_DEFS.map(w => w.slug));
 
-const DATA_FILES = ['transactions.json', 'accounts.json', 'rules.json', 'assets.json', 'budgets.json', 'properties.json', 'settings.json'];
+const DATA_FILES = ['transactions.json', 'accounts.json', 'rules.json', 'assets.json', 'budgets.json', 'properties.json', 'scenarios.json', 'settings.json'];
 
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 for (const ws of WORKSPACES) mkdirSync(join(DATA_DIR, ws), { recursive: true });
@@ -127,6 +127,13 @@ function makeHandlers(ws) {
       writeJSON(ws, 'budgets.json', budgets);
       res.json(budgets);
     },
+    // Scenarios
+    getScenarios: (_, res) => res.json(readJSON(ws, 'scenarios.json')),
+    postScenarios: (req, res) => {
+      const scenarios = req.body || [];
+      writeJSON(ws, 'scenarios.json', scenarios);
+      res.json(scenarios);
+    },
   };
 }
 
@@ -153,6 +160,9 @@ function registerRoutes(app, prefix, h) {
 
   app.get(`${prefix}/budgets`, h.getBudgets);
   app.post(`${prefix}/budgets`, h.postBudgets);
+
+  app.get(`${prefix}/scenarios`, h.getScenarios);
+  app.post(`${prefix}/scenarios`, h.postScenarios);
 }
 
 // Workspace-scoped routes

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getAccountBalance, getNetWorth, getMonthlyIncomeExpense, classifyTaxType } from '../analytics';
+import { getAccountBalance, getNetWorth, getMonthlyIncomeExpense, classifyTaxType, getRobustMonthlyNetSavings } from '../analytics';
 import type { Transaction, Account } from '../../types';
 
 const MARCH_START = new Date('2025-03-01T00:00:00');
@@ -121,5 +121,56 @@ describe('classifyTaxType', () => {
   it('falls back to Overig', () => {
     const tx = makeTx({ name: 'Onbekende Instelling', category: 'Belastingen' });
     expect(classifyTaxType(tx)).toBe('Overig');
+  });
+});
+
+describe('getRobustMonthlyNetSavings', () => {
+  /** Build a tx in the month that is `offset` months before now. */
+  function txInMonth(offset: number, amount: number, id = `tx-${offset}-${amount}`): Transaction {
+    const now = new Date();
+    const d = new Date(now.getFullYear(), now.getMonth() - offset, 15);
+    const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-15`;
+    return makeTx({ id, date: ymd, amount, category: amount > 0 ? 'Inkomen' : 'Overig' });
+  }
+
+  it('returns median of monthly nets, ignoring a single huge outlier', () => {
+    // 11 "normal" months of +1000 each, 1 outlier month of +60_000 (apartment sale)
+    const txs: Transaction[] = [];
+    for (let i = 1; i <= 12; i++) {
+      txs.push(txInMonth(i, i === 6 ? 60_000 : 1000));
+    }
+    // Simple average would be (11*1000 + 60_000) / 12 ≈ 5917. Median is 1000.
+    expect(getRobustMonthlyNetSavings(txs, 12)).toBe(1000);
+  });
+
+  it('uses median when income and expenses mix per month', () => {
+    // Each month has +3000 income and -2000 expenses → net +1000 per month
+    const txs: Transaction[] = [];
+    for (let i = 1; i <= 6; i++) {
+      txs.push(txInMonth(i, 3000, `in-${i}`));
+      txs.push(txInMonth(i, -2000, `ex-${i}`));
+    }
+    expect(getRobustMonthlyNetSavings(txs, 12)).toBe(1000);
+  });
+
+  it('returns 0 for empty transaction list', () => {
+    expect(getRobustMonthlyNetSavings([], 12)).toBe(0);
+  });
+
+  it('excludes transfers from the baseline', () => {
+    const txs: Transaction[] = [];
+    for (let i = 1; i <= 6; i++) {
+      txs.push(txInMonth(i, 1000, `in-${i}`));
+      const transfer = txInMonth(i, -5000, `tr-${i}`);
+      transfer.isInternal = true;
+      txs.push(transfer);
+    }
+    expect(getRobustMonthlyNetSavings(txs, 12)).toBe(1000);
+  });
+
+  it('only counts months with activity (no dilution from empty months)', () => {
+    // Only 2 months of data, both with +1000. Window says 12 but empty months don't count.
+    const txs: Transaction[] = [txInMonth(1, 1000), txInMonth(2, 1000)];
+    expect(getRobustMonthlyNetSavings(txs, 12)).toBe(1000);
   });
 });

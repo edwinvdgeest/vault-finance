@@ -53,7 +53,7 @@ const PIE_COLORS = [
 ];
 
 // All CoinGecko IDs to fetch prices for
-const COINGECKO_IDS = 'bitcoin,bitcoin-cash,bitcoin-cash-sv,ecash,apenft,tether';
+const COINGECKO_IDS = 'bitcoin,ethereum,bitcoin-cash,bitcoin-cash-sv,ecash,apenft,tether';
 
 function GlassCard({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (

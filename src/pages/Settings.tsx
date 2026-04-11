@@ -8,6 +8,7 @@ import { getMonthlyPayment, getPropertyEquityAt } from '../lib/property';
 
 const KNOWN_COINS: { type: string; symbol: string; name: string }[] = [
   { type: 'bitcoin', symbol: 'BTC', name: 'Bitcoin' },
+  { type: 'ethereum', symbol: 'ETH', name: 'Ethereum' },
   { type: 'bitcoin-cash', symbol: 'BCH', name: 'Bitcoin Cash' },
   { type: 'bitcoin-cash-sv', symbol: 'BCHSV', name: 'Bitcoin SV' },
   { type: 'ecash', symbol: 'XEC', name: 'eCash' },

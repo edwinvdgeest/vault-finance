@@ -26,6 +26,7 @@ export async function listWorkspaces(): Promise<WorkspaceDescriptor[]> {
     return [
       { slug: 'personal', label: 'Privé', accent: '#8b5cf6' },
       { slug: 'holding', label: 'Unleashing Energy', accent: '#f59e0b' },
+      { slug: 'ouders', label: 'Ouders', accent: '#10b981' },
     ];
   }
 }

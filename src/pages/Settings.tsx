@@ -43,6 +43,7 @@ const BANK_LABELS: Record<string, string> = {
   bunq: 'bunq',
   triodos: 'Triodos',
   abn: 'ABN AMRO',
+  ing: 'ING',
 };
 
 export default function Settings() {

@@ -2,6 +2,7 @@ import { useRef, useState, useMemo } from 'react';
 import { parseBunqCsv } from '../lib/parsers/bunq';
 import { parseTriodosCsv } from '../lib/parsers/triodos';
 import { parseAbnTxt } from '../lib/parsers/abn';
+import { parseIngCsv } from '../lib/parsers/ing';
 import { storage } from '../lib/storage';
 import { deduplicate, formatCurrency, formatDate } from '../lib/utils';
 import { getDefaultRulesWithIds } from '../lib/categorizer';
@@ -12,6 +13,7 @@ const BANK_LABELS: Record<string, string> = {
   bunq: 'bunq',
   triodos: 'Triodos',
   abn: 'ABN AMRO',
+  ing: 'ING',
 };
 
 function daysSince(dateStr: string): number {
@@ -68,6 +70,8 @@ export default function Import() {
         ? parseBunqCsv(text, rules)
         : bank === 'triodos'
         ? parseTriodosCsv(text, rules)
+        : bank === 'ing'
+        ? parseIngCsv(text, rules)
         : parseAbnTxt(text, rules);
       setAllParsed(txs);
       setPreview(txs.slice(0, 50));
@@ -239,6 +243,7 @@ export default function Import() {
               <option value="bunq">bunq</option>
               <option value="triodos">Triodos</option>
               <option value="abn">ABN AMRO</option>
+              <option value="ing">ING</option>
             </select>
           </div>
           <div>
@@ -311,6 +316,8 @@ export default function Import() {
             ? 'bunq CSV (puntkomma-gescheiden, met header)'
             : bank === 'triodos'
             ? 'Triodos CSV (komma-gescheiden, geen header)'
+            : bank === 'ing'
+            ? 'ING CSV (puntkomma-gescheiden, met header)'
             : 'ABN AMRO TXT (tab-gescheiden, geen header)'}
         </p>
       </div>

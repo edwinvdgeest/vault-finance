@@ -18,7 +18,7 @@ export interface Account {
   id: string;
   name: string;
   iban: string;
-  bank: 'bunq' | 'triodos' | 'abn';
+  bank: BankType;
   startingBalance: number;
   startingDate: string; // ISO YYYY-MM-DD
 }
@@ -85,7 +85,7 @@ export interface Scenario {
   createdAt: string;
 }
 
-export type BankType = 'bunq' | 'triodos' | 'abn';
+export type BankType = 'bunq' | 'triodos' | 'abn' | 'ing';
 export type PeriodFilter = 'this-month' | 'last-month' | 'quarter' | 'year' | 'custom';
 
 export const CATEGORY_SETS = {
@@ -129,6 +129,25 @@ export const CATEGORY_SETS = {
     'Reiskosten',
     'Representatie',
     'Advieskosten',
+    'Overboekingen',
+    'Overig',
+  ],
+  ouders: [
+    'Pensioen & AOW',
+    'Wonen & Hypotheek',
+    'Energie & Water',
+    'Internet & Telecom',
+    'Verzekeringen',
+    'Zorg & Medisch',
+    'Thuiszorg & Hulp',
+    'Boodschappen',
+    'Horeca',
+    'Vervoer',
+    'Abonnementen',
+    'Cadeaus & Familie',
+    'Vakantie & Reizen',
+    'Belastingen',
+    'Bank & Rente',
     'Overboekingen',
     'Overig',
   ],

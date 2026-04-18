@@ -13,6 +13,7 @@ const STATIC_DIR = join(__dirname, '..', 'dist');
 const WORKSPACE_DEFS = [
   { slug: 'personal', label: 'Privé', accent: '#8b5cf6' },
   { slug: 'holding', label: 'Unleashing Energy', accent: '#f59e0b' },
+  { slug: 'ouders', label: 'Ouders', accent: '#10b981' },
 ];
 const WORKSPACES = (process.env.VAULT_WORKSPACES
   ? process.env.VAULT_WORKSPACES.split(',').map(s => s.trim())

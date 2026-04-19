@@ -3,6 +3,7 @@ import { parseBunqCsv } from '../lib/parsers/bunq';
 import { parseTriodosCsv } from '../lib/parsers/triodos';
 import { parseAbnTxt } from '../lib/parsers/abn';
 import { parseIngCsv } from '../lib/parsers/ing';
+import { detectBank } from '../lib/parsers/detect';
 import { storage } from '../lib/storage';
 import { deduplicate, formatCurrency, formatDate } from '../lib/utils';
 import { getDefaultRulesWithIds } from '../lib/categorizer';
@@ -26,6 +27,9 @@ export default function Import() {
   const { workspaces, workspace } = useWorkspace();
   const wsDescriptor = workspaces.find(w => w.slug === workspace);
   const [bank, setBank] = useState<BankType>('bunq');
+  const [detected, setDetected] = useState<BankType | null>(null);
+  const [showBankOverride, setShowBankOverride] = useState(false);
+  const [lastBuffer, setLastBuffer] = useState<ArrayBuffer | null>(null);
   const [dragging, setDragging] = useState(false);
   const [preview, setPreview] = useState<Transaction[]>([]);
   const [allParsed, setAllParsed] = useState<Transaction[]>([]);
@@ -63,20 +67,24 @@ export default function Import() {
     });
   }, [refreshKey]);
 
-  function parseFile(text: string) {
+  function parseBuffer(buffer: ArrayBuffer, bankType: BankType) {
     const rules = storage.getRules().length > 0 ? storage.getRules() : getDefaultRulesWithIds();
+    const encoding = bankType === 'abn' ? 'windows-1252' : 'utf-8';
+    const text = new TextDecoder(encoding).decode(buffer);
     try {
-      const txs = bank === 'bunq'
+      const txs = bankType === 'bunq'
         ? parseBunqCsv(text, rules)
-        : bank === 'triodos'
+        : bankType === 'triodos'
         ? parseTriodosCsv(text, rules)
-        : bank === 'ing'
+        : bankType === 'ing'
         ? parseIngCsv(text, rules)
         : parseAbnTxt(text, rules);
       setAllParsed(txs);
       setPreview(txs.slice(0, 50));
       setError('');
     } catch (e) {
+      setAllParsed([]);
+      setPreview([]);
       setError('Kon bestand niet verwerken. Controleer het formaat.');
       console.error(e);
     }
@@ -86,8 +94,36 @@ export default function Import() {
     setFileName(file.name);
     setImported(null);
     const reader = new FileReader();
-    reader.onload = (e) => parseFile(e.target?.result as string);
-    reader.readAsText(file, bank === 'abn' ? 'windows-1252' : 'utf-8');
+    reader.onload = (e) => {
+      const buffer = e.target?.result as ArrayBuffer;
+      if (!buffer) return;
+      setLastBuffer(buffer);
+      // Decode a small UTF-8 sample for detection (tabs/ASCII headers survive mismatched encoding).
+      const sampleBytes = new Uint8Array(buffer.slice(0, 2048));
+      const sample = new TextDecoder('utf-8', { fatal: false }).decode(sampleBytes);
+      const result = detectBank(sample);
+      if (result) {
+        setDetected(result);
+        setBank(result);
+        setShowBankOverride(false);
+        parseBuffer(buffer, result);
+      } else {
+        setDetected(null);
+        setShowBankOverride(true);
+        setAllParsed([]);
+        setPreview([]);
+        setError('Kon bank niet automatisch herkennen — kies hieronder handmatig.');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function handleBankChange(next: BankType) {
+    setBank(next);
+    setDetected(null);
+    if (lastBuffer) {
+      parseBuffer(lastBuffer, next);
+    }
   }
 
   function handleDrop(e: React.DragEvent) {
@@ -135,6 +171,9 @@ export default function Import() {
     setAllParsed([]);
     setPreview([]);
     setFileName('');
+    setDetected(null);
+    setLastBuffer(null);
+    setShowBankOverride(false);
     setRefreshKey(k => k + 1);
     void rules;
     void text;
@@ -229,23 +268,9 @@ export default function Import() {
 
       <div className="glass-card">
         <p style={{ fontSize: '0.75rem', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '1rem' }}>
-          Bank & Instellingen
+          Instellingen
         </p>
         <div className="grid-halves" style={{ gap: '1rem' }}>
-          <div>
-            <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.4rem' }}>Bank</label>
-            <select
-              className="glass-input"
-              style={{ padding: '0.5rem 0.75rem', fontSize: '0.875rem' }}
-              value={bank}
-              onChange={e => setBank(e.target.value as BankType)}
-            >
-              <option value="bunq">bunq</option>
-              <option value="triodos">Triodos</option>
-              <option value="abn">ABN AMRO</option>
-              <option value="ing">ING</option>
-            </select>
-          </div>
           <div>
             <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.4rem' }}>Rekeningnaam (nieuw)</label>
             <input
@@ -268,6 +293,22 @@ export default function Import() {
             />
           </div>
         </div>
+        {showBankOverride && (
+          <div style={{ marginTop: '1rem' }}>
+            <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.4rem' }}>Bank (handmatig)</label>
+            <select
+              className="glass-input"
+              style={{ padding: '0.5rem 0.75rem', fontSize: '0.875rem', maxWidth: 240 }}
+              value={bank}
+              onChange={e => handleBankChange(e.target.value as BankType)}
+            >
+              <option value="bunq">bunq</option>
+              <option value="triodos">Triodos</option>
+              <option value="abn">ABN AMRO</option>
+              <option value="ing">ING</option>
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Drop zone */}
@@ -295,7 +336,7 @@ export default function Import() {
         <input
           ref={fileRef}
           type="file"
-          accept=".csv,.txt,.tab"
+          accept=".csv,.txt,.tab,.tsv,text/csv,text/plain,text/tab-separated-values"
           style={{
             position: 'absolute',
             inset: 0,
@@ -312,15 +353,43 @@ export default function Import() {
           {fileName || 'Sleep bestand hier of klik om te selecteren'}
         </p>
         <p style={{ fontSize: '0.8rem', color: '#64748b', pointerEvents: 'none' }}>
-          {bank === 'bunq'
-            ? 'bunq CSV (puntkomma-gescheiden, met header)'
-            : bank === 'triodos'
-            ? 'Triodos CSV (komma-gescheiden, geen header)'
-            : bank === 'ing'
-            ? 'ING CSV (puntkomma-gescheiden, met header)'
-            : 'ABN AMRO TXT (tab-gescheiden, geen header)'}
+          bunq · Triodos · ABN AMRO · ING — bank wordt automatisch herkend
         </p>
       </div>
+
+      {detected && !showBankOverride && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.625rem',
+            padding: '0.625rem 0.875rem',
+            borderRadius: '0.5rem',
+            background: 'rgba(16,185,129,0.08)',
+            border: '1px solid rgba(16,185,129,0.25)',
+            fontSize: '0.85rem',
+          }}
+        >
+          <span style={{ color: '#6ee7b7', fontWeight: 600 }}>✓ Gedetecteerd:</span>
+          <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{BANK_LABELS[detected]}</span>
+          <button
+            type="button"
+            onClick={() => setShowBankOverride(true)}
+            style={{
+              marginLeft: 'auto',
+              background: 'transparent',
+              border: 'none',
+              color: '#94a3b8',
+              fontSize: '0.8rem',
+              cursor: 'pointer',
+              padding: 0,
+              textDecoration: 'underline',
+            }}
+          >
+            wijzig
+          </button>
+        </div>
+      )}
 
       {error && (
         <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '0.5rem', padding: '0.75rem 1rem', color: '#fca5a5', fontSize: '0.875rem' }}>

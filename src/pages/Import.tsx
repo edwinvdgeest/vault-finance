@@ -336,7 +336,6 @@ export default function Import() {
         <input
           ref={fileRef}
           type="file"
-          accept=".csv,.txt,.tab,.tsv,text/csv,text/plain,text/tab-separated-values"
           style={{
             position: 'absolute',
             inset: 0,

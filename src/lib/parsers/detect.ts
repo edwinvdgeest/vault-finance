@@ -8,7 +8,15 @@ function stripBom(text: string): string {
   return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
 }
 
-function firstNonEmptyLines(text: string, max = 3): string[] {
+function stripQuotes(field: string): string {
+  const trimmed = field.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function firstNonEmptyLines(text: string, max = 5): string[] {
   const lines: string[] = [];
   for (const raw of stripBom(text).split(/\r?\n/)) {
     const line = raw.trim();
@@ -18,22 +26,28 @@ function firstNonEmptyLines(text: string, max = 3): string[] {
   return lines;
 }
 
-export function detectBank(sample: string): BankType | null {
-  const lines = firstNonEmptyLines(sample, 3);
+function looksLikeAbnLine(line: string): boolean {
+  if (!line.includes('\t')) return false;
+  const cols = line.split('\t').map(stripQuotes);
+  if (cols.length < 8) return false;
+  const hasIban = cols.some(c => IBAN_RE.test(c.toUpperCase()));
+  const hasYyyymmdd = cols.some(c => YYYYMMDD_RE.test(c));
+  return hasIban && hasYyyymmdd;
+}
+
+export function detectBank(sample: string, fileName?: string): BankType | null {
+  // Filename hint — ABN is the only supported bank that exports .tab files.
+  if (fileName && /\.tab$/i.test(fileName)) return 'abn';
+
+  const lines = firstNonEmptyLines(sample, 5);
   if (lines.length === 0) return null;
 
   const first = lines[0];
 
-  // ABN AMRO: tab-delimited, no header, 8+ cols, col[2] YYYYMMDD, col[0] IBAN-like
-  if (first.includes('\t')) {
-    const cols = first.split('\t').map(c => c.trim());
-    if (
-      cols.length >= 8 &&
-      YYYYMMDD_RE.test(cols[2] ?? '') &&
-      IBAN_RE.test((cols[0] ?? '').toUpperCase())
-    ) {
-      return 'abn';
-    }
+  // ABN AMRO: tab-delimited line with IBAN + YYYYMMDD among first few rows
+  // (tolerant for optional header row or quoted fields).
+  if (lines.some(looksLikeAbnLine)) {
+    return 'abn';
   }
 
   // ING: header row contains "Datum" AND "Bedrag (EUR)"

@@ -101,7 +101,7 @@ export default function Import() {
       // Decode a small UTF-8 sample for detection (tabs/ASCII headers survive mismatched encoding).
       const sampleBytes = new Uint8Array(buffer.slice(0, 2048));
       const sample = new TextDecoder('utf-8', { fatal: false }).decode(sampleBytes);
-      const result = detectBank(sample);
+      const result = detectBank(sample, file.name);
       if (result) {
         setDetected(result);
         setBank(result);

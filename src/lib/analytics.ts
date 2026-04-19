@@ -22,9 +22,10 @@ export function getNetWorth(
   cryptoValue: number,
   propertyEquity: number,
   asOf?: Date,
+  brokerValue: number = 0,
 ): number {
   const cash = accounts.reduce((sum, acc) => sum + getAccountBalance(acc, transactions, asOf), 0);
-  return cash + cryptoValue + propertyEquity;
+  return cash + cryptoValue + propertyEquity + brokerValue;
 }
 
 export function getMonthlyNetWorthTrend(
@@ -61,6 +62,7 @@ export function getNetWorthTrend(
   end: Date,
   granularity: TrendGranularity,
   properties: Property[] = [],
+  brokerValue: number = 0,
 ): { label: string; netWorth: number; date: string }[] {
   if (accounts.length === 0 && transactions.length === 0) return [];
 
@@ -76,7 +78,7 @@ export function getNetWorthTrend(
       : new Date(cur);
     const asOf = pointDate > end ? end : pointDate;
     const equity = getTotalPropertyEquity(properties, asOf).equity;
-    const nw = getNetWorth(accounts, transactions, cryptoValue, equity, asOf);
+    const nw = getNetWorth(accounts, transactions, cryptoValue, equity, asOf, brokerValue);
 
     const label = granularity === 'monthly'
       ? asOf.toLocaleDateString('nl-NL', { month: 'short' })

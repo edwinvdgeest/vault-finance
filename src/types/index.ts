@@ -30,15 +30,21 @@ export interface Rule {
   isCustom: boolean;
 }
 
+export type AssetClass = 'crypto' | 'etf' | 'broker-cash';
+
 export interface Asset {
-  type: string; // CoinGecko ID (e.g., 'bitcoin', 'bitcoin-cash', 'ecash')
-  symbol: string; // ticker (e.g., 'BTC', 'BCH', 'XEC')
+  type: string; // CoinGecko ID (crypto) | ISIN (etf) | broker slug (broker-cash)
+  symbol: string; // ticker (e.g., 'BTC', 'BCH', 'XEC') or 'CASH'
   name: string; // display name
   amount: number;
   purchasePrice?: number; // optional EUR cost basis per unit
   currentPrice: number; // EUR price per unit
   lastPrice: number; // backward compat (same as currentPrice)
   lastUpdated: string;
+  assetClass?: AssetClass; // omitted = 'crypto' for backward compat
+  isin?: string; // for etf
+  broker?: string; // 'degiro' for etf/broker-cash
+  currency?: string; // local currency, e.g. 'EUR'
 }
 
 export interface Property {

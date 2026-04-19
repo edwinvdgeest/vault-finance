@@ -1,10 +1,15 @@
-import { useState, useMemo } from 'react';
+import { useRef, useState, useMemo } from 'react';
 import { storage } from '../lib/storage';
 import { getDefaultRulesWithIds, categorize, getRuleConflicts } from '../lib/categorizer';
 import { formatCurrency } from '../lib/utils';
 import { getCategories } from '../lib/categories';
 import type { Asset, Rule, Account, Budget, Property } from '../types';
 import { getMonthlyPayment, getPropertyEquityAt } from '../lib/property';
+import { parseDegiroPortfolio } from '../lib/parsers/degiro';
+
+function isCryptoAsset(a: Asset): boolean {
+  return a.assetClass === 'crypto' || a.assetClass === undefined;
+}
 
 const KNOWN_COINS: { type: string; symbol: string; name: string }[] = [
   { type: 'bitcoin', symbol: 'BTC', name: 'Bitcoin' },
@@ -73,9 +78,16 @@ export default function Settings() {
   }, [conflicts, rules]);
 
   const [cryptoHoldings, setCryptoHoldings] = useState<CryptoEdit[]>(() =>
-    storage.getAssets().map(assetToEdit),
+    storage.getAssets().filter(isCryptoAsset).map(assetToEdit),
   );
   const [newCoinType, setNewCoinType] = useState(KNOWN_COINS[0].type);
+
+  const [brokerHoldings, setBrokerHoldings] = useState<Asset[]>(() =>
+    storage.getAssets().filter(a => a.broker === 'degiro'),
+  );
+  const [degiroPreview, setDegiroPreview] = useState<Asset[] | null>(null);
+  const [degiroError, setDegiroError] = useState('');
+  const degiroFileRef = useRef<HTMLInputElement>(null);
 
   const [properties, setProperties] = useState<Property[]>(() => storage.getProperties());
 
@@ -245,10 +257,10 @@ export default function Settings() {
   function saveCrypto() {
     const now = new Date().toISOString();
     const existing = storage.getAssets();
-    const assets: Asset[] = cryptoHoldings
+    const cryptoAssets: Asset[] = cryptoHoldings
       .filter(h => h.amount !== '' && !isNaN(parseFloat(h.amount)))
       .map(h => {
-        const prev = existing.find(a => a.type === h.type);
+        const prev = existing.find(a => a.type === h.type && isCryptoAsset(a));
         const purchasePrice = h.purchasePrice !== '' ? parseFloat(h.purchasePrice) : undefined;
         const currentPrice = prev?.currentPrice ?? prev?.lastPrice ?? 0;
         return {
@@ -260,10 +272,63 @@ export default function Settings() {
           currentPrice,
           lastPrice: currentPrice,
           lastUpdated: prev?.lastUpdated ?? now,
+          assetClass: 'crypto' as const,
         };
       });
-    storage.setAssets(assets);
+    const nonCrypto = existing.filter(a => !isCryptoAsset(a));
+    storage.setAssets([...cryptoAssets, ...nonCrypto]);
     showSaved('Crypto portfolio opgeslagen');
+  }
+
+  function handleDegiroFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setDegiroError('');
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const text = ev.target?.result as string;
+        const parsed = parseDegiroPortfolio(text);
+        if (parsed.length === 0) {
+          setDegiroPreview(null);
+          setDegiroError('Geen regels gevonden in dit bestand.');
+          return;
+        }
+        setDegiroPreview(parsed);
+      } catch (err) {
+        setDegiroPreview(null);
+        setDegiroError('Kon DeGiro CSV niet verwerken.');
+        console.error(err);
+      }
+    };
+    reader.readAsText(file);
+    if (degiroFileRef.current) degiroFileRef.current.value = '';
+  }
+
+  function confirmDegiroImport() {
+    if (!degiroPreview) return;
+    const existing = storage.getAssets();
+    const kept = existing.filter(a => a.broker !== 'degiro');
+    const next = [...kept, ...degiroPreview];
+    storage.setAssets(next);
+    setBrokerHoldings(degiroPreview);
+    setDegiroPreview(null);
+    showSaved('DeGiro portfolio geïmporteerd');
+  }
+
+  function cancelDegiroImport() {
+    setDegiroPreview(null);
+    setDegiroError('');
+  }
+
+  function removeBrokerHolding(idx: number) {
+    const target = brokerHoldings[idx];
+    if (!target) return;
+    const updatedBroker = brokerHoldings.filter((_, i) => i !== idx);
+    const existing = storage.getAssets();
+    const next = existing.filter(a => !(a.broker === target.broker && a.type === target.type));
+    storage.setAssets(next);
+    setBrokerHoldings(updatedBroker);
   }
 
   function exportData() {
@@ -287,7 +352,8 @@ export default function Settings() {
         storage.importAll(data);
         showSaved('Backup geïmporteerd');
         if (data.assets) {
-          setCryptoHoldings(data.assets.map(assetToEdit));
+          setCryptoHoldings(data.assets.filter(isCryptoAsset).map(assetToEdit));
+          setBrokerHoldings(data.assets.filter((a: Asset) => a.broker === 'degiro'));
         }
       } catch {
         showSaved('Ongeldige backup');
@@ -717,6 +783,115 @@ export default function Settings() {
           onClick={saveCrypto}
         >
           Opslaan
+        </button>
+      </div>
+
+      {/* Beleggingen via broker */}
+      <div className="glass-card">
+        <p style={sectionTitle}>Beleggingen via broker</p>
+
+        {brokerHoldings.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 5rem 6rem 6rem 2rem', gap: '0.5rem', alignItems: 'center', padding: '0 0.25rem' }}>
+              <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600 }}>Product</span>
+              <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600, textAlign: 'right' }}>Aantal</span>
+              <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600, textAlign: 'right' }}>Koers</span>
+              <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600, textAlign: 'right' }}>Waarde</span>
+              <span />
+            </div>
+            {brokerHoldings.map((h, idx) => {
+              const value = h.amount * (h.currentPrice ?? h.lastPrice ?? 0);
+              return (
+                <div key={`${h.broker}-${h.type}`} style={{ display: 'grid', gridTemplateColumns: '1fr 5rem 6rem 6rem 2rem', gap: '0.5rem', alignItems: 'center', padding: '0.5rem 0.5rem', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '0.5rem' }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: '0.85rem', color: '#cbd5e1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.name}</div>
+                    {h.isin && <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{h.isin}</div>}
+                  </div>
+                  <span style={{ fontSize: '0.8rem', color: '#cbd5e1', textAlign: 'right' }}>
+                    {h.assetClass === 'broker-cash' ? '—' : h.amount}
+                  </span>
+                  <span style={{ fontSize: '0.8rem', color: '#cbd5e1', textAlign: 'right' }}>
+                    {h.assetClass === 'broker-cash' ? '—' : formatCurrency(h.currentPrice ?? h.lastPrice ?? 0)}
+                  </span>
+                  <span style={{ fontSize: '0.85rem', color: '#10b981', fontWeight: 600, textAlign: 'right' }}>
+                    {formatCurrency(value)}
+                  </span>
+                  <button
+                    onClick={() => removeBrokerHolding(idx)}
+                    style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1.25rem', padding: '0.25rem', lineHeight: 1, minHeight: 44, minWidth: 44, transition: 'color 0.15s' }}
+                    title="Verwijder"
+                    onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
+                    onMouseLeave={e => (e.currentTarget.style.color = '#64748b')}
+                  >
+                    ×
+                  </button>
+                </div>
+              );
+            })}
+            {brokerHoldings[0]?.lastUpdated && (
+              <p style={{ fontSize: '0.7rem', color: '#64748b', margin: '0.25rem 0 0 0.25rem' }}>
+                Laatste import: {new Date(brokerHoldings[0].lastUpdated).toLocaleString('nl-NL')}
+              </p>
+            )}
+          </div>
+        )}
+
+        {brokerHoldings.length === 0 && !degiroPreview && (
+          <p style={{ fontSize: '0.85rem', color: '#94a3b8', margin: '0 0 1rem' }}>
+            Nog geen broker-portfolio geïmporteerd. Upload je DeGiro <code>Portfolio.csv</code>.
+          </p>
+        )}
+
+        {degiroPreview && (
+          <div style={{ marginBottom: '1rem', padding: '0.75rem', background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: '0.5rem' }}>
+            <p style={{ fontSize: '0.8rem', color: '#6ee7b7', margin: '0 0 0.5rem', fontWeight: 600 }}>
+              Voorvertoning ({degiroPreview.length} regel{degiroPreview.length === 1 ? '' : 's'})
+            </p>
+            {degiroPreview.map((h, i) => {
+              const value = h.amount * (h.currentPrice ?? 0);
+              return (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: '#cbd5e1', padding: '0.15rem 0' }}>
+                  <span>{h.name}{h.assetClass === 'etf' ? ` (${h.amount} × ${formatCurrency(h.currentPrice ?? 0)})` : ''}</span>
+                  <span style={{ color: '#10b981', fontWeight: 600 }}>{formatCurrency(value)}</span>
+                </div>
+              );
+            })}
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
+              <button
+                className="glass-button"
+                style={{ fontFamily: 'inherit', padding: '0.4rem 1rem', fontSize: '0.8rem', fontWeight: 600, background: 'rgba(16,185,129,0.2)', borderColor: 'rgba(16,185,129,0.4)', color: 'white' }}
+                onClick={confirmDegiroImport}
+              >
+                Importeer
+              </button>
+              <button
+                className="glass-button"
+                style={{ fontFamily: 'inherit', padding: '0.4rem 1rem', fontSize: '0.8rem', fontWeight: 500 }}
+                onClick={cancelDegiroImport}
+              >
+                Annuleer
+              </button>
+            </div>
+          </div>
+        )}
+
+        {degiroError && (
+          <p style={{ fontSize: '0.8rem', color: '#fca5a5', margin: '0 0 0.75rem' }}>{degiroError}</p>
+        )}
+
+        <input
+          ref={degiroFileRef}
+          type="file"
+          accept=".csv"
+          style={{ display: 'none' }}
+          onChange={handleDegiroFile}
+        />
+        <button
+          className="glass-button"
+          style={{ fontFamily: 'inherit', padding: '0.5rem 1.25rem', fontSize: '0.875rem', fontWeight: 600, background: 'rgba(6,182,212,0.15)', borderColor: 'rgba(6,182,212,0.3)', color: 'white' }}
+          onClick={() => degiroFileRef.current?.click()}
+        >
+          {brokerHoldings.length > 0 ? 'Vervang via nieuwe DeGiro CSV' : 'Upload DeGiro Portfolio.csv'}
         </button>
       </div>
 

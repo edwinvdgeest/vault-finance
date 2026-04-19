@@ -91,8 +91,20 @@ function assetPrice(a: Asset, prices: Record<string, number>): number {
   return prices[a.type] ?? a.currentPrice ?? a.lastPrice ?? 0;
 }
 
+function isCrypto(a: Asset): boolean {
+  return a.assetClass === 'crypto' || a.assetClass === undefined;
+}
+
+function isBrokerHolding(a: Asset): boolean {
+  return a.assetClass === 'etf' || a.assetClass === 'broker-cash';
+}
+
 function computeTotalCryptoValue(assets: Asset[], prices: Record<string, number>): number {
-  return assets.reduce((sum, a) => sum + a.amount * assetPrice(a, prices), 0);
+  return assets.filter(isCrypto).reduce((sum, a) => sum + a.amount * assetPrice(a, prices), 0);
+}
+
+function computeBrokerValue(assets: Asset[]): number {
+  return assets.filter(isBrokerHolding).reduce((sum, a) => sum + a.amount * (a.currentPrice ?? a.lastPrice ?? 0), 0);
 }
 
 export default function Dashboard() {
@@ -113,12 +125,13 @@ export default function Dashboard() {
   const periodTxs = filterByPeriod(transactions, start, end);
 
   const totalCryptoValue = computeTotalCryptoValue(assets, cryptoPrices);
+  const totalBrokerValue = computeBrokerValue(assets);
   const currentPropertyEq = getTotalPropertyEquity(properties).equity;
   const lastMonthEnd = getLastMonthEnd();
   const lastMonthPropertyEq = getTotalPropertyEquity(properties, lastMonthEnd).equity;
-  const currentNetWorth = getNetWorth(accounts, transactions, totalCryptoValue, currentPropertyEq);
+  const currentNetWorth = getNetWorth(accounts, transactions, totalCryptoValue, currentPropertyEq, undefined, totalBrokerValue);
   const lastMonthTotalCrypto = computeTotalCryptoValue(assets, cryptoPrices);
-  const lastMonthNetWorth = getNetWorth(accounts, transactions, lastMonthTotalCrypto, lastMonthPropertyEq, lastMonthEnd);
+  const lastMonthNetWorth = getNetWorth(accounts, transactions, lastMonthTotalCrypto, lastMonthPropertyEq, lastMonthEnd, totalBrokerValue);
   const netWorthDelta = currentNetWorth - lastMonthNetWorth;
   const netWorthDeltaPct = lastMonthNetWorth !== 0 ? (netWorthDelta / Math.abs(lastMonthNetWorth)) * 100 : 0;
 
@@ -126,7 +139,7 @@ export default function Dashboard() {
   const granularity = period === 'this-month' || period === 'last-month'
     ? 'daily' as const
     : period === 'quarter' ? 'weekly' as const : 'monthly' as const;
-  const trendData = getNetWorthTrend(accounts, transactions, totalCryptoValue, start, end, granularity, properties);
+  const trendData = getNetWorthTrend(accounts, transactions, totalCryptoValue, start, end, granularity, properties, totalBrokerValue);
   const incomeExpenseData = getMonthlyIncomeExpense(periodTxs, start, end);
   const categoryData = getCategorySpending(periodTxs);
   const accountData = getAccountBreakdown(accounts, transactions);
@@ -160,6 +173,7 @@ export default function Dashboard() {
         if (assets.length > 0) {
           const now = new Date().toISOString();
           const updated = assets.map(a => {
+            if (!isCrypto(a)) return a;
             const price = priceMap[a.type];
             if (price == null) return a;
             return { ...a, currentPrice: price, lastPrice: price, lastUpdated: now };
@@ -191,6 +205,7 @@ export default function Dashboard() {
     const fetchAll = async () => {
       const history: Record<string, number[]> = {};
       for (const asset of assets) {
+        if (!isCrypto(asset)) continue;
         try {
           const res = await fetch(
             `https://api.coingecko.com/api/v3/coins/${asset.type}/market_chart?vs_currency=eur&days=180&interval=daily`,
@@ -248,9 +263,12 @@ export default function Dashboard() {
               </span>
               <span style={{ color: '#64748b', fontSize: '0.8rem' }}>t.o.v. vorige maand</span>
             </div>
-            {(totalCryptoValue > 0 || currentPropertyEq !== 0) && (
+            {(totalCryptoValue > 0 || currentPropertyEq !== 0 || totalBrokerValue > 0) && (
               <div style={{ marginTop: '0.5rem', color: '#94a3b8', fontSize: '0.8rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-                <span>💰 Cash: <span style={{ color: '#06b6d4' }}>{formatCurrency(currentNetWorth - totalCryptoValue - currentPropertyEq)}</span></span>
+                <span>💰 Cash: <span style={{ color: '#06b6d4' }}>{formatCurrency(currentNetWorth - totalCryptoValue - currentPropertyEq - totalBrokerValue)}</span></span>
+                {totalBrokerValue > 0 && (
+                  <span>📈 Beleggingen: <span style={{ color: '#10b981' }}>{formatCurrency(totalBrokerValue)}</span></span>
+                )}
                 {totalCryptoValue > 0 && (
                   <span>₿ Crypto: <span style={{ color: '#f59e0b' }}>{formatCurrency(totalCryptoValue)}</span></span>
                 )}
@@ -374,7 +392,7 @@ export default function Dashboard() {
       </div>
 
       {/* Crypto Portfolio */}
-      {assets.length > 0 && (
+      {assets.filter(isCrypto).length > 0 && (
         <GlassCard>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
             <SectionTitle>Crypto portfolio</SectionTitle>
@@ -383,7 +401,7 @@ export default function Dashboard() {
             </span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
-            {assets.map((asset, assetIdx) => {
+            {assets.filter(isCrypto).map((asset, assetIdx) => {
               const price = assetPrice(asset, cryptoPrices);
               const value = asset.amount * price;
               const sym = assetSymbol(asset);
@@ -443,6 +461,67 @@ export default function Dashboard() {
                       {price >= asset.purchasePrice ? '+' : ''}{(((price - asset.purchasePrice) / asset.purchasePrice) * 100).toFixed(1)}%
                     </span>
                   ) : <span />}
+                </div>
+              );
+            })}
+          </div>
+        </GlassCard>
+      )}
+
+      {/* Beleggingen via broker */}
+      {assets.filter(isBrokerHolding).length > 0 && (
+        <GlassCard>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+            <SectionTitle>Beleggingen{assets.find(isBrokerHolding)?.broker === 'degiro' ? ' — DeGiro' : ''}</SectionTitle>
+            <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#10b981' }}>
+              {formatCurrency(totalBrokerValue)}
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+            {assets.filter(isBrokerHolding).map(asset => {
+              const price = asset.currentPrice ?? asset.lastPrice ?? 0;
+              const value = asset.amount * price;
+              const isCash = asset.assetClass === 'broker-cash';
+              return (
+                <div
+                  key={`${asset.broker}-${asset.type}`}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '3rem 1fr auto',
+                    gap: '0.75rem',
+                    alignItems: 'center',
+                    padding: '0.5rem 0.75rem',
+                    background: 'rgba(255,255,255,0.03)',
+                    borderRadius: '0.5rem',
+                    border: '1px solid rgba(255,255,255,0.06)',
+                  }}
+                >
+                  <span style={{
+                    fontSize: '0.7rem',
+                    fontWeight: 700,
+                    color: isCash ? '#67e8f9' : '#86efac',
+                    background: isCash ? 'rgba(6,182,212,0.15)' : 'rgba(16,185,129,0.15)',
+                    padding: '0.2rem 0.35rem',
+                    borderRadius: '0.25rem',
+                    textAlign: 'center',
+                    letterSpacing: '0.04em',
+                  }}>
+                    {asset.symbol}
+                  </span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.1rem', minWidth: 0 }}>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{asset.name}</span>
+                    <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                      {isCash ? `${asset.currency ?? 'EUR'} cash` : `${asset.amount.toLocaleString('nl-NL', { maximumSignificantDigits: 8 })} × ${formatCurrency(price)}`}
+                    </span>
+                  </div>
+                  <span style={{
+                    fontSize: '0.85rem',
+                    fontWeight: 600,
+                    color: value > 0.01 ? '#10b981' : '#475569',
+                    textAlign: 'right',
+                  }}>
+                    {formatCurrency(value)}
+                  </span>
                 </div>
               );
             })}

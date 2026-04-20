@@ -487,7 +487,7 @@ export default function Dashboard() {
                   key={`${asset.broker}-${asset.type}`}
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: '3rem 1fr auto',
+                    gridTemplateColumns: 'auto 1fr auto',
                     gap: '0.75rem',
                     alignItems: 'center',
                     padding: '0.5rem 0.75rem',
@@ -497,14 +497,16 @@ export default function Dashboard() {
                   }}
                 >
                   <span style={{
-                    fontSize: '0.7rem',
+                    fontSize: '0.65rem',
                     fontWeight: 700,
                     color: isCash ? '#67e8f9' : '#86efac',
                     background: isCash ? 'rgba(6,182,212,0.15)' : 'rgba(16,185,129,0.15)',
-                    padding: '0.2rem 0.35rem',
+                    padding: '0.2rem 0.4rem',
                     borderRadius: '0.25rem',
                     textAlign: 'center',
                     letterSpacing: '0.04em',
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                    whiteSpace: 'nowrap',
                   }}>
                     {asset.symbol}
                   </span>

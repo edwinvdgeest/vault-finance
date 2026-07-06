@@ -12,16 +12,44 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import {
+  scorePortfolio, suggestFunds, THEME_LABELS, LEVEL_LABELS,
+} from '../src/lib/sustainability';
+import type { SustainTheme, SustainLevel } from '../src/lib/sustainability';
+import type { Asset as LibAsset } from '../src/types';
 
 const API = process.env.VAULT_API_URL || 'http://localhost:3001';
+const DEFAULT_WORKSPACE = 'personal';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-async function api<T>(path: string): Promise<T> {
-  const res = await fetch(`${API}/api${path}`);
-  if (!res.ok) throw new Error(`API ${path}: ${res.status} ${res.statusText}`);
+// Default workspace via het legacy /api-pad (alias voor 'personal'), zodat de
+// MCP-server ook werkt tegen een oudere API-deploy zonder /api/ws-routes.
+async function api<T>(path: string, workspace?: string): Promise<T> {
+  const prefix = apiPrefix(workspace);
+  const res = await fetch(`${API}${prefix}${path}`);
+  if (!res.ok) throw new Error(`API ${prefix}${path}: ${res.status} ${res.statusText}`);
   return res.json() as Promise<T>;
 }
+
+function apiPrefix(workspace?: string): string {
+  const ws = workspace || DEFAULT_WORKSPACE;
+  return ws === DEFAULT_WORKSPACE ? '/api' : `/api/ws/${ws}`;
+}
+
+async function apiSend<T>(method: 'PUT' | 'POST', path: string, body: unknown, workspace?: string): Promise<T> {
+  const prefix = apiPrefix(workspace);
+  const res = await fetch(`${API}${prefix}${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`API ${method} ${prefix}${path}: ${res.status} ${res.statusText}`);
+  return res.json() as Promise<T>;
+}
+
+const workspaceParam = z.string().optional()
+  .describe("Workspace: 'personal' (privé, default), 'holding' (Unleashing Energy) of 'ouders'");
 
 interface Transaction {
   id: string; date: string; account: string; accountName: string;
@@ -34,6 +62,11 @@ interface Account {
   startingBalance: number; startingDate: string;
 }
 interface Budget { category: string; monthlyLimit: number; }
+interface Asset {
+  type: string; symbol: string; name: string;
+  amount: number; currentPrice: number; lastUpdated?: string;
+  assetClass?: 'crypto' | 'etf' | 'broker-cash'; broker?: string;
+}
 interface Property {
   id: string; label: string; currentValue: number; valuationDate: string;
   annualGrowth: number;
@@ -81,13 +114,16 @@ const server = new McpServer({
 
 server.tool(
   'vault_summary',
-  'Financieel overzicht: rekeningsaldi, netto vermogen, inkomen/uitgaven deze en vorige maand',
-  {},
-  async () => {
-    const [txs, accounts, properties] = await Promise.all([
-      api<Transaction[]>('/transactions'),
-      api<Account[]>('/accounts'),
-      api<Property[]>('/properties'),
+  'Financieel overzicht: rekeningsaldi, beleggingen, netto vermogen, inkomen/uitgaven deze en vorige maand',
+  {
+    workspace: workspaceParam,
+  },
+  async ({ workspace }) => {
+    const [txs, accounts, properties, assets] = await Promise.all([
+      api<Transaction[]>('/transactions', workspace),
+      api<Account[]>('/accounts', workspace),
+      api<Property[]>('/properties', workspace),
+      api<Asset[]>('/assets', workspace),
     ]);
 
     // Account balances
@@ -97,6 +133,14 @@ server.tool(
     }));
     const totalCash = balances.reduce((s, b) => s + b.balance, 0);
 
+    // Assets (crypto + broker holdings)
+    const assetValue = (a: Asset) => a.amount * a.currentPrice;
+    const cryptoAssets = assets.filter(a => !a.assetClass || a.assetClass === 'crypto');
+    const brokerAssets = assets.filter(a => a.assetClass === 'etf' || a.assetClass === 'broker-cash');
+    const totalCrypto = cryptoAssets.reduce((s, a) => s + assetValue(a), 0);
+    const totalBroker = brokerAssets.reduce((s, a) => s + assetValue(a), 0);
+    const totalAssets = totalCrypto + totalBroker;
+
     // Property equity
     let propertyValue = 0, propertyDebt = 0;
     for (const p of properties) {
@@ -105,7 +149,13 @@ server.tool(
     }
     const propertyEquity = propertyValue - propertyDebt;
 
-    const netWorth = totalCash + propertyEquity;
+    const netWorth = totalCash + totalAssets + propertyEquity;
+
+    // Data freshness
+    const lastTxDate = txs.reduce((max, t) => (t.date > max ? t.date : max), '');
+    const daysStale = lastTxDate
+      ? Math.floor((Date.now() - new Date(lastTxDate + 'T00:00:00').getTime()) / 86400000)
+      : null;
 
     // Monthly income/expense (this month + last month)
     const now = new Date();
@@ -131,6 +181,26 @@ server.tool(
       '',
     ];
 
+    if (assets.length > 0) {
+      lines.push('### Beleggingen');
+      for (const a of brokerAssets) {
+        lines.push(`- **${a.name}** (${a.broker ?? 'broker'}): ${fmt(assetValue(a))}`);
+      }
+      for (const a of cryptoAssets) {
+        lines.push(`- **${a.name}** (${a.amount} ${a.symbol}): ${fmt(assetValue(a))}`);
+      }
+      lines.push(`- **Totaal beleggingen**: ${fmt(totalAssets)}`);
+      const oldestPrice = assets.reduce((min, a) => {
+        if (!a.lastUpdated) return min;
+        return !min || a.lastUpdated < min ? a.lastUpdated : min;
+      }, '');
+      if (oldestPrice) {
+        const priceAge = Math.floor((Date.now() - new Date(oldestPrice).getTime()) / 86400000);
+        if (priceAge > 7) lines.push(`  ⚠️ Koersen laatst bijgewerkt ${oldestPrice.slice(0, 10)} (${priceAge} dagen geleden)`);
+      }
+      lines.push('');
+    }
+
     if (properties.length > 0) {
       lines.push('### Woning');
       for (const p of properties) {
@@ -144,9 +214,13 @@ server.tool(
       lines.push('');
     }
 
+    const parts = [`cash ${fmt(totalCash)}`];
+    if (totalAssets > 0) parts.push(`beleggingen ${fmt(totalAssets)}`);
+    if (properties.length > 0) parts.push(`woning ${fmt(propertyEquity)}`);
+
     lines.push(
       '### Netto Vermogen',
-      `**${fmt(netWorth)}**` + (properties.length > 0 ? ` (cash ${fmt(totalCash)} + woning ${fmt(propertyEquity)})` : ''),
+      `**${fmt(netWorth)}** (${parts.join(' + ')})`,
       '',
       `### ${monthLabel(thisMonth)} (lopend)`,
       `- Inkomen: ${fmt(thisStats.income)}`,
@@ -160,6 +234,13 @@ server.tool(
       `- Netto: ${fmt(lastStats.net)}`,
       `- ${lastStats.count} transacties`,
     );
+
+    if (lastTxDate) {
+      lines.push('', `_Laatste transactie: ${lastTxDate}_`);
+      if (daysStale !== null && daysStale > 14) {
+        lines.push(`⚠️ **Data is ${daysStale} dagen oud** — recente maanden zijn onvolledig. Importeer nieuwe bankafschriften via de Import-pagina.`);
+      }
+    }
 
     return { content: [{ type: 'text', text: lines.join('\n') }] };
   },
@@ -180,9 +261,11 @@ server.tool(
     account: z.string().optional().describe('Filter op IBAN of rekeningnaam'),
     label: z.string().optional().describe('Filter op label'),
     limit: z.number().optional().describe('Max aantal resultaten (default 50)'),
+    show_ids: z.boolean().optional().describe('Toon transactie-ids (nodig voor vault_update_transaction)'),
+    workspace: workspaceParam,
   },
-  async ({ from, to, category, search, min_amount, max_amount, account, label, limit }) => {
-    let txs = await api<Transaction[]>('/transactions');
+  async ({ from, to, category, search, min_amount, max_amount, account, label, limit, show_ids, workspace }) => {
+    let txs = await api<Transaction[]>('/transactions', workspace);
 
     // Apply filters
     if (from) txs = txs.filter(t => t.date >= from);
@@ -223,7 +306,7 @@ server.tool(
       const tags = [t.category];
       if (t.isInternal) tags.push('intern');
       if (t.labels?.length) tags.push(...t.labels);
-      lines.push(`**${t.date}** | ${fmt(t.amount)} | ${t.name} | ${tags.join(', ')}${t.note ? ` | 📝 ${t.note}` : ''}`);
+      lines.push(`**${t.date}** | ${fmt(t.amount)} | ${t.name} | ${tags.join(', ')}${t.note ? ` | 📝 ${t.note}` : ''}${show_ids ? `\n  id: \`${t.id}\`` : ''}`);
     }
 
     return { content: [{ type: 'text', text: lines.join('\n') }] };
@@ -239,9 +322,10 @@ server.tool(
     from: z.string().optional().describe('Startdatum (YYYY-MM-DD), default: begin deze maand'),
     to: z.string().optional().describe('Einddatum (YYYY-MM-DD), default: vandaag'),
     compare: z.boolean().optional().describe('Vergelijk met vorige gelijke periode (default: true)'),
+    workspace: workspaceParam,
   },
-  async ({ from, to, compare }) => {
-    const txs = await api<Transaction[]>('/transactions');
+  async ({ from, to, compare, workspace }) => {
+    const txs = await api<Transaction[]>('/transactions', workspace);
     const now = new Date();
     const startStr = from ?? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
     const endStr = to ?? now.toISOString().slice(0, 10);
@@ -311,9 +395,10 @@ server.tool(
   'Maandelijks overzicht van inkomen, uitgaven en spaarquote over de afgelopen N maanden',
   {
     months: z.number().optional().describe('Aantal maanden terug (default: 12)'),
+    workspace: workspaceParam,
   },
-  async ({ months }) => {
-    const txs = await api<Transaction[]>('/transactions');
+  async ({ months, workspace }) => {
+    const txs = await api<Transaction[]>('/transactions', workspace);
     const n = months ?? 12;
     const now = new Date();
 
@@ -357,9 +442,10 @@ server.tool(
     from: z.string().optional().describe('Startdatum (YYYY-MM-DD)'),
     to: z.string().optional().describe('Einddatum (YYYY-MM-DD)'),
     limit: z.number().optional().describe('Aantal resultaten (default: 20)'),
+    workspace: workspaceParam,
   },
-  async ({ from, to, limit }) => {
-    const txs = await api<Transaction[]>('/transactions');
+  async ({ from, to, limit, workspace }) => {
+    const txs = await api<Transaction[]>('/transactions', workspace);
     const now = new Date();
     const startStr = from ?? `${now.getFullYear()}-01-01`;
     const endStr = to ?? now.toISOString().slice(0, 10);
@@ -396,15 +482,16 @@ server.tool(
 
 server.tool(
   'vault_recurring',
-  'Detecteer terugkerende uitgaven (abonnementen, vaste lasten)',
+  'Detecteer actieve terugkerende uitgaven (abonnementen, vaste lasten) met interval en maandbedrag',
   {
     min_occurrences: z.number().optional().describe('Minimaal aantal keer voorgekomen (default: 3)'),
+    include_inactive: z.boolean().optional().describe('Toon ook gestopte abonnementen (default: false)'),
+    workspace: workspaceParam,
   },
-  async ({ min_occurrences }) => {
-    const txs = await api<Transaction[]>('/transactions');
+  async ({ min_occurrences, include_inactive, workspace }) => {
+    const txs = await api<Transaction[]>('/transactions', workspace);
     const minOcc = min_occurrences ?? 3;
 
-    // Group by (name, approximate amount) — use rounded amount as key
     const filtered = txs.filter(t => t.amount < 0 && !t.isInternal);
     const map = new Map<string, { amounts: number[]; dates: string[]; category: string }>();
 
@@ -417,30 +504,69 @@ server.tool(
       map.set(key, entry);
     }
 
-    const recurring = [...map.entries()]
+    // "Actief" wordt beoordeeld t.o.v. de laatste transactie in de dataset,
+    // zodat een verouderde import niet alles als gestopt markeert.
+    const refDate = filtered.reduce((max, t) => (t.date > max ? t.date : max), '');
+    const refTime = refDate ? new Date(refDate + 'T00:00:00').getTime() : Date.now();
+
+    function median(nums: number[]): number {
+      const s = [...nums].sort((a, b) => a - b);
+      const mid = Math.floor(s.length / 2);
+      return s.length % 2 === 0 ? (s[mid - 1] + s[mid]) / 2 : s[mid];
+    }
+
+    function intervalLabel(days: number): string {
+      if (days <= 10) return 'wekelijks';
+      if (days <= 45) return 'maandelijks';
+      if (days <= 130) return 'per kwartaal';
+      if (days <= 250) return 'halfjaarlijks';
+      return 'jaarlijks';
+    }
+
+    const analyzed = [...map.entries()]
       .filter(([, v]) => v.amounts.length >= minOcc)
       .map(([name, { amounts, dates, category }]) => {
         const avg = amounts.reduce((s, a) => s + a, 0) / amounts.length;
-        // Check if amounts are consistent (low variance = likely subscription)
         const variance = amounts.reduce((s, a) => s + Math.pow(a - avg, 2), 0) / amounts.length;
         const cv = Math.sqrt(variance) / avg; // coefficient of variation
         dates.sort();
-        return { name, avg, count: amounts.length, category, cv, lastDate: dates[dates.length - 1] };
+        const times = dates.map(d => new Date(d + 'T00:00:00').getTime());
+        const gaps: number[] = [];
+        for (let i = 1; i < times.length; i++) gaps.push((times[i] - times[i - 1]) / 86400000);
+        const interval = median(gaps);
+        const daysSinceLast = (refTime - times[times.length - 1]) / 86400000;
+        const monthly = interval > 0 ? avg * (30.44 / interval) : avg;
+        const active = daysSinceLast <= Math.max(2 * interval, 45);
+        return {
+          name, avg, count: amounts.length, category, cv,
+          lastDate: dates[dates.length - 1], interval, monthly, active,
+        };
       })
-      .filter(r => r.cv < 0.3) // consistent amounts only
-      .sort((a, b) => b.avg * b.count - a.avg * a.count); // sort by total impact
+      // consistent bedrag én een plausibel herhaalpatroon (wekelijks t/m jaarlijks);
+      // frequenter dan ~6 dagen is los koopgedrag (boodschappen), geen vaste last
+      .filter(r => r.cv < 0.3 && r.interval >= 6 && r.interval <= 400);
+
+    const active = analyzed.filter(r => r.active).sort((a, b) => b.monthly - a.monthly);
+    const inactive = analyzed.filter(r => !r.active).sort((a, b) => b.monthly - a.monthly);
+    const totalMonthly = active.reduce((s, r) => s + r.monthly, 0);
+
+    const fmtLine = (r: typeof analyzed[number]) =>
+      `- **${r.name}** — ${fmt(r.avg)}/keer, ${intervalLabel(r.interval)} (~elke ${Math.round(r.interval)}d) — ~${fmt(r.monthly)}/mnd — ${r.count}x, ${r.category} — laatst: ${r.lastDate}`;
 
     const lines = [
-      `## Terugkerende uitgaven (≥${minOcc}x, consistent bedrag)`,
+      `## Actieve terugkerende uitgaven (≥${minOcc}x, consistent bedrag)`,
+      refDate ? `_Peildatum: ${refDate} (laatste transactie in dataset)_` : '',
       '',
-      ...recurring.map(r => {
-        const monthly = `~${fmt(r.avg)}/keer`;
-        const yearly = fmt(r.avg * 12);
-        return `- **${r.name}** — ${monthly} (${r.count}x, ${r.category}) — ~${yearly}/jaar — laatst: ${r.lastDate}`;
-      }),
+      ...active.map(fmtLine),
       '',
-      `**Totaal maandelijks vaste lasten**: ~${fmt(recurring.reduce((s, r) => s + r.avg, 0))}`,
+      `**Totaal actieve vaste lasten**: ~${fmt(totalMonthly)}/maand (~${fmt(totalMonthly * 12)}/jaar)`,
     ];
+
+    if (include_inactive && inactive.length > 0) {
+      lines.push('', `## Gestopte abonnementen (${inactive.length})`, '', ...inactive.map(fmtLine));
+    } else if (inactive.length > 0) {
+      lines.push('', `_${inactive.length} gestopte abonnementen verborgen (gebruik include_inactive: true)_`);
+    }
 
     return { content: [{ type: 'text', text: lines.join('\n') }] };
   },
@@ -453,9 +579,10 @@ server.tool(
   'Belastingoverzicht: betaald en ontvangen per jaar en type (Belastingdienst, Gemeente, etc.)',
   {
     year: z.number().optional().describe('Specifiek jaar (default: alle jaren)'),
+    workspace: workspaceParam,
   },
-  async ({ year }) => {
-    const txs = await api<Transaction[]>('/transactions');
+  async ({ year, workspace }) => {
+    const txs = await api<Transaction[]>('/transactions', workspace);
 
     const taxTxs = txs.filter(t => t.category === 'Belastingen');
 
@@ -510,11 +637,12 @@ server.tool(
   'Budget voortgang: hoeveel is besteed t.o.v. het maandbudget per categorie',
   {
     month: z.string().optional().describe('Maand (YYYY-MM), default: huidige maand'),
+    workspace: workspaceParam,
   },
-  async ({ month }) => {
+  async ({ month, workspace }) => {
     const [txs, budgets] = await Promise.all([
-      api<Transaction[]>('/transactions'),
-      api<Budget[]>('/budgets'),
+      api<Transaction[]>('/transactions', workspace),
+      api<Budget[]>('/budgets', workspace),
     ]);
 
     if (budgets.length === 0) {
@@ -550,6 +678,250 @@ server.tool(
     }
 
     return { content: [{ type: 'text', text: lines.join('\n') }] };
+  },
+);
+
+// ── Tool: vault_box3 ─────────────────────────────────────────────────────────
+
+server.tool(
+  'vault_box3',
+  'Box 3-voorbereiding: banktegoeden op de peildatum (1 januari), gereconstrueerd uit de transactiehistorie, plus beleggingen',
+  {
+    year: z.number().optional().describe('Belastingjaar (default: huidig jaar); peildatum is 1 januari van dit jaar'),
+    workspace: workspaceParam,
+  },
+  async ({ year, workspace }) => {
+    const [txs, accounts, assets] = await Promise.all([
+      api<Transaction[]>('/transactions', workspace),
+      api<Account[]>('/accounts', workspace),
+      api<Asset[]>('/assets', workspace),
+    ]);
+
+    const y = year ?? new Date().getFullYear();
+    const peildatum = `${y}-01-01`;
+    const asOf = new Date(`${y - 1}-12-31T00:00:00`);
+
+    const lines = [
+      `## Box 3 vermogen — peildatum ${peildatum}`,
+      '',
+      '### Banktegoeden',
+    ];
+
+    // Historie die pas ná de peildatum begint → saldo mogelijk onvolledig
+    const firstTxDate = new Map<string, string>();
+    for (const t of txs) {
+      const cur = firstTxDate.get(t.account);
+      if (!cur || t.date < cur) firstTxDate.set(t.account, t.date);
+    }
+
+    let totalCash = 0;
+    for (const acc of accounts) {
+      const balance = getAccountBalance(acc, txs, asOf);
+      totalCash += balance;
+      const firstTx = firstTxDate.get(acc.iban);
+      const reliable = (firstTx !== undefined && firstTx <= peildatum) || acc.startingDate <= peildatum;
+      const warning = reliable ? '' : ' ⚠️ *transactiehistorie begint ná de peildatum — saldo mogelijk onvolledig*';
+      lines.push(`- **${acc.name}** (${acc.iban.slice(-4)}): ${fmt(balance)}${warning}`);
+    }
+    lines.push(`- **Totaal banktegoeden**: ${fmt(totalCash)}`);
+
+    if (assets.length > 0) {
+      const assetValue = (a: Asset) => a.amount * a.currentPrice;
+      const totalAssets = assets.reduce((s, a) => s + assetValue(a), 0);
+      lines.push(
+        '',
+        '### Beleggingen & crypto (indicatief)',
+        ...assets.map(a => `- **${a.name}**: ${fmt(assetValue(a))}`),
+        `- **Totaal**: ${fmt(totalAssets)}`,
+        '',
+        '_Beleggingen tonen huidige aantallen × huidige koers. Voor de aangifte geldt de werkelijke waarde op de peildatum — controleer die in je broker/wallet-jaaroverzicht._',
+      );
+    }
+
+    lines.push(
+      '',
+      '_De eigen woning (hoofdverblijf) valt in box 1, niet in box 3. Banktegoeden zijn gereconstrueerd uit transacties t/m 31 december ' + (y - 1) + '; controleer met de jaaroverzichten van de bank._',
+    );
+
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  },
+);
+
+// ── Tool: vault_update_transaction ───────────────────────────────────────────
+
+server.tool(
+  'vault_update_transaction',
+  'Werk een transactie bij: categorie, notitie en/of labels. Gebruik vault_transactions met show_ids voor het transactie-id.',
+  {
+    id: z.string().describe('Transactie-id (via vault_transactions met show_ids: true)'),
+    category: z.string().optional().describe('Nieuwe categorie (bijv. "Boodschappen")'),
+    note: z.string().optional().describe('Notitie bij de transactie (lege string verwijdert de notitie)'),
+    labels: z.array(z.string()).optional().describe('Labels (vervangt bestaande labels)'),
+    workspace: workspaceParam,
+  },
+  async ({ id, category, note, labels, workspace }) => {
+    const patch: Record<string, unknown> = {};
+    if (category !== undefined) patch.category = category;
+    if (note !== undefined) patch.note = note;
+    if (labels !== undefined) patch.labels = labels;
+    if (Object.keys(patch).length === 0) {
+      return { content: [{ type: 'text', text: 'Geen wijzigingen opgegeven: geef category, note en/of labels mee.' }] };
+    }
+
+    const updated = await apiSend<Transaction>('PUT', `/transactions/${encodeURIComponent(id)}`, patch, workspace);
+
+    const tags = [updated.category, ...(updated.labels ?? [])];
+    return {
+      content: [{
+        type: 'text',
+        text: `Transactie bijgewerkt:\n**${updated.date}** | ${fmt(updated.amount)} | ${updated.name} | ${tags.join(', ')}${updated.note ? ` | 📝 ${updated.note}` : ''}`,
+      }],
+    };
+  },
+);
+
+// ── Tool: vault_refresh_prices ───────────────────────────────────────────────
+
+server.tool(
+  'vault_refresh_prices',
+  'Ververs crypto- en ETF-koersen van de beleggingen (CoinGecko/Yahoo Finance) op de server',
+  {
+    workspace: workspaceParam,
+  },
+  async ({ workspace }) => {
+    const result = await apiSend<{ updated: number; skipped: number; assets: Asset[] }>(
+      'POST', '/assets/refresh', undefined, workspace,
+    );
+    const lines = [
+      `Koersen ververst: ${result.updated} bijgewerkt, ${result.skipped} overgeslagen.`,
+      '',
+      ...result.assets.map(a => `- **${a.name}**: ${fmt(a.amount * a.currentPrice)} (koers ${fmt(a.currentPrice)}, ${a.lastUpdated?.slice(0, 10) ?? 'onbekend'})`),
+    ];
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  },
+);
+
+// ── Tool: vault_sustainability ───────────────────────────────────────────────
+
+server.tool(
+  'vault_sustainability',
+  'Duurzaamheidsprofiel van de beleggingsportefeuille (SFDR artikel 6/8/9, thema\'s zoals water en hernieuwbare energie) plus fondssuggesties per thema',
+  {
+    theme: z.enum(['water', 'hernieuwbare-energie', 'breed-duurzaam', 'impact']).optional()
+      .describe('Filter fondssuggesties op thema (default: alle thema\'s)'),
+    workspace: workspaceParam,
+  },
+  async ({ theme, workspace }) => {
+    const assets = await api<LibAsset[]>('/assets', workspace);
+    const score = scorePortfolio(assets);
+
+    const lines = ['## Duurzaamheid van de portefeuille', ''];
+
+    if (score.holdings.length === 0) {
+      lines.push('_Geen beleggingen gevonden. Importeer een DeGiro Portfolio.csv of voeg holdings toe via Instellingen._');
+    } else {
+      lines.push(
+        `- **Duurzaam belegd** (licht duurzaam of beter): ${score.pctSustainable}% van ${fmt(score.totalValue)}`,
+        `- **Streng duurzaam of impact** (SRI/Paris-Aligned, themafondsen, art. 9): ${score.pctStrict}%`,
+        `- **Impact / donkergroen** (art. 9): ${score.pctImpact}%`,
+        '',
+        '### Verdeling',
+        ...([3, 2, 1, 0] as SustainLevel[])
+          .filter(l => score.byLevel[l] > 0)
+          .map(l => `- ${LEVEL_LABELS[l]}: ${fmt(score.byLevel[l])}`),
+      );
+      if (score.cashValue > 0) lines.push(`- Broker-cash (niet meegewogen): ${fmt(score.cashValue)}`);
+
+      if (score.byTheme.length > 0) {
+        lines.push('', '### Per thema', ...score.byTheme.map(t =>
+          `- ${THEME_LABELS[t.theme]}: ${fmt(t.value)}`));
+      }
+
+      lines.push('', '### Holdings');
+      for (const h of score.holdings) {
+        const a = h.assessment;
+        const themes = a.themes.length > 0
+          ? ` — ${a.themes.map(t => THEME_LABELS[t as SustainTheme] ?? t).join(', ')}`
+          : '';
+        const why = a.signals.length > 0 ? ` _(${a.signals.join('; ')}${a.note ? `; 📝 ${a.note}` : ''})_` : '';
+        const todo = a.source === 'geen'
+          ? ' *(niet herkend — onderzoek dit fonds en leg de classificatie vast met vault_classify_asset)*'
+          : '';
+        lines.push(`- **${h.asset.name}**: ${fmt(h.value)} — ${LEVEL_LABELS[a.level]}${a.sfdr ? ` (SFDR art. ${a.sfdr})` : ''}${themes}${why}${todo}`);
+      }
+    }
+
+    const suggestions = suggestFunds(theme, assets);
+    if (suggestions.length > 0) {
+      lines.push('', `### Fondssuggesties${theme ? ` — ${THEME_LABELS[theme]}` : ''}`);
+      for (const f of suggestions) {
+        const sfdr = f.sfdr ? `SFDR art. ${f.sfdr}` : 'SFDR: zie aanbieder';
+        const ter = f.ter !== undefined ? `, kosten ${(f.ter * 100).toFixed(2)}%/jr` : '';
+        lines.push(`- **${f.name}**${f.ticker ? ` (${f.ticker})` : ''} — ${f.themes.map(t => THEME_LABELS[t]).join('/')} — ${sfdr}${ter}`, `  ${f.description} ${f.url}`);
+      }
+    }
+
+    lines.push(
+      '',
+      '_Geen beleggingsadvies. SFDR-classificaties zijn indicatief; controleer het prospectus. Vergelijk rendementen o.a. via de Consumentenbond-test van duurzame beleggingsfondsen._',
+    );
+
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  },
+);
+
+// ── Tool: vault_classify_asset ───────────────────────────────────────────────
+
+server.tool(
+  'vault_classify_asset',
+  'Leg de duurzaamheidsclassificatie van een holding vast (SFDR, thema\'s, bronnotitie). Gebruik dit na eigen onderzoek (prospectus/aanbieder) voor fondsen die de app niet herkent.',
+  {
+    asset: z.string().describe('ISIN, ticker of (deel van de) naam van de holding'),
+    sfdr: z.union([z.literal(6), z.literal(8), z.literal(9)]).optional()
+      .describe('SFDR-artikel: 9 (donkergroen), 8 (lichtgroen) of 6 (grijs)'),
+    themes: z.array(z.enum(['water', 'hernieuwbare-energie', 'breed-duurzaam', 'impact'])).optional()
+      .describe('Duurzame thema\'s van het fonds'),
+    note: z.string().optional().describe('Bron/toelichting, bijv. "SFDR-status prospectus aanbieder, jul 2026"'),
+    clear: z.boolean().optional().describe('true = verwijder de handmatige classificatie'),
+    workspace: workspaceParam,
+  },
+  async ({ asset, sfdr, themes, note, clear, workspace }) => {
+    const assets = await api<LibAsset[]>('/assets', workspace);
+    const q = asset.trim().toUpperCase();
+
+    const matches = assets.filter(a => {
+      const keys = [a.isin, a.type, a.symbol].filter((k): k is string => !!k).map(k => k.toUpperCase());
+      return keys.includes(q) || a.name.toUpperCase().includes(q);
+    });
+    if (matches.length === 0) {
+      return { content: [{ type: 'text', text: `Geen holding gevonden voor "${asset}". Beschikbaar: ${assets.map(a => a.name).join(', ')}` }] };
+    }
+    if (matches.length > 1) {
+      return { content: [{ type: 'text', text: `"${asset}" is niet eenduidig: ${matches.map(a => `${a.name} (${a.isin ?? a.symbol})`).join(', ')}. Gebruik de ISIN.` }] };
+    }
+
+    const target = matches[0];
+    const updated = assets.map(a => {
+      if (a !== target) return a;
+      if (clear) return { ...a, sustainability: undefined };
+      return { ...a, sustainability: { ...a.sustainability, sfdr, themes, note } };
+    });
+    await apiSend<LibAsset[]>('POST', '/assets', updated, workspace);
+
+    if (clear) {
+      return { content: [{ type: 'text', text: `Handmatige classificatie van **${target.name}** verwijderd.` }] };
+    }
+    const parts = [
+      sfdr !== undefined ? `SFDR art. ${sfdr}` : null,
+      themes?.length ? `thema's: ${themes.map(t => THEME_LABELS[t]).join(', ')}` : null,
+      note ? `notitie: ${note}` : null,
+    ].filter(Boolean);
+    return {
+      content: [{
+        type: 'text',
+        text: `Classificatie van **${target.name}** opgeslagen (${parts.join(' — ')}). De Duurzaam-pagina en vault_sustainability gebruiken dit direct.`,
+      }],
+    };
   },
 );
 

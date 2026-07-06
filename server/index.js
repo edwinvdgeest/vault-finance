@@ -60,6 +60,139 @@ function writeJSON(workspace, file, data) {
   writeFileSync(join(dir, file), JSON.stringify(data, null, 2));
 }
 
+// --- Asset price refresh ---
+// Ververst crypto- (CoinGecko) en ETF-koersen (Yahoo Finance, via ISIN) zodat
+// het vermogen ook zonder handmatige DeGiro-import actueel blijft.
+// PRICE_REFRESH_INTERVAL_MIN=0 schakelt de automatische verversing uit.
+const PRICE_REFRESH_MIN = Number(process.env.PRICE_REFRESH_INTERVAL_MIN ?? 360);
+
+async function fetchJson(url) {
+  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (vault-finance)' } });
+  if (!res.ok) throw new Error(`${url}: ${res.status}`);
+  return res.json();
+}
+
+const ISIN_RE = /^[A-Z]{2}[A-Z0-9]{9}\d$/;
+
+// Kandidaat-symbolen voor een EUR-notering. DeGiro's "Symbool/ISIN"-kolom bevat
+// soms een ticker (VWRL) en soms een ISIN; tickers proberen we direct op
+// Amsterdam (.AS) en Xetra (.DE), daarna valt alles terug op Yahoo-search.
+async function yahooSymbolCandidates(asset) {
+  if (asset.yahooSymbol) return [asset.yahooSymbol];
+  const candidates = [];
+  const sym = (asset.symbol || '').trim().toUpperCase();
+  if (sym && !ISIN_RE.test(sym)) candidates.push(`${sym}.AS`, `${sym}.DE`, sym);
+  try {
+    const q = asset.isin || asset.type;
+    const search = await fetchJson(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=10&newsCount=0`);
+    const quotes = (search.quotes || []).filter(x => x.symbol).map(x => x.symbol);
+    candidates.push(
+      ...quotes.filter(s => s.endsWith('.AS')),
+      ...quotes.filter(s => s.endsWith('.DE')),
+      ...quotes.filter(s => !s.endsWith('.AS') && !s.endsWith('.DE')),
+    );
+  } catch {
+    // search is optioneel; ticker-kandidaten blijven over
+  }
+  return [...new Set(candidates)];
+}
+
+// Probeert kandidaten tot er één met een EUR-koers gevonden is. Is er alleen
+// een notering in een andere valuta (bijv. USD op de LSE), dan wordt die met
+// de actuele wisselkoers naar EUR omgerekend.
+async function fetchEurQuote(asset) {
+  let fallback = null;
+  for (const symbol of await yahooSymbolCandidates(asset)) {
+    try {
+      const chart = await fetchJson(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1d`);
+      const meta = chart.chart?.result?.[0]?.meta;
+      if (meta?.regularMarketPrice == null) continue;
+      if (meta.currency === 'EUR') return { symbol, price: meta.regularMarketPrice };
+      if (!fallback) fallback = { symbol, price: meta.regularMarketPrice, currency: meta.currency };
+    } catch {
+      // volgende kandidaat proberen
+    }
+  }
+
+  if (fallback) {
+    let { price, currency } = fallback;
+    if (currency === 'GBp') { price /= 100; currency = 'GBP'; } // LSE noteert in pence
+    try {
+      const fx = await fetchJson(`https://query1.finance.yahoo.com/v8/finance/chart/${currency}EUR%3DX?range=1d&interval=1d`);
+      const rate = fx.chart?.result?.[0]?.meta?.regularMarketPrice;
+      if (rate) return { symbol: fallback.symbol, price: price * rate };
+    } catch {
+      // geen wisselkoers beschikbaar → koers uit de CSV-import blijft staan
+    }
+  }
+  return null;
+}
+
+async function refreshWorkspacePrices(ws) {
+  const assets = readJSON(ws, 'assets.json');
+  if (!Array.isArray(assets) || assets.length === 0) return { updated: 0, skipped: 0 };
+  const now = new Date().toISOString();
+  let updated = 0, skipped = 0;
+
+  const isCrypto = a => !a.assetClass || a.assetClass === 'crypto';
+  const cryptoIds = [...new Set(assets.filter(isCrypto).map(a => a.type))];
+  let cryptoPrices = {};
+  if (cryptoIds.length > 0) {
+    try {
+      cryptoPrices = await fetchJson(`https://api.coingecko.com/api/v3/simple/price?ids=${cryptoIds.join(',')}&vs_currencies=eur`);
+    } catch (err) {
+      console.warn(`[prices] CoinGecko: ${err.message}`);
+    }
+  }
+
+  for (const asset of assets) {
+    if (isCrypto(asset)) {
+      const price = cryptoPrices[asset.type]?.eur;
+      if (price != null) {
+        asset.currentPrice = price;
+        asset.lastPrice = price;
+        asset.lastUpdated = now;
+        updated++;
+      } else skipped++;
+    } else if (asset.assetClass === 'etf') {
+      try {
+        // Alleen EUR-noteringen overnemen; anders blijft de DeGiro-importprijs staan
+        const quote = await fetchEurQuote(asset);
+        if (quote) {
+          asset.currentPrice = quote.price;
+          asset.lastPrice = quote.price;
+          asset.lastUpdated = now;
+          asset.yahooSymbol = quote.symbol;
+          updated++;
+        } else skipped++;
+      } catch (err) {
+        console.warn(`[prices] ${asset.symbol}: ${err.message}`);
+        skipped++;
+      }
+    }
+    // broker-cash: nominale waarde, geen koers nodig
+  }
+
+  if (updated > 0) writeJSON(ws, 'assets.json', assets);
+  return { updated, skipped };
+}
+
+async function refreshAllPrices() {
+  for (const ws of WORKSPACES) {
+    try {
+      const r = await refreshWorkspacePrices(ws);
+      if (r.updated > 0) console.log(`[prices] ${ws}: ${r.updated} koers(en) bijgewerkt`);
+    } catch (err) {
+      console.warn(`[prices] ${ws}: ${err.message}`);
+    }
+  }
+}
+
+if (PRICE_REFRESH_MIN > 0) {
+  setTimeout(refreshAllPrices, 15_000);
+  setInterval(refreshAllPrices, PRICE_REFRESH_MIN * 60 * 1000);
+}
+
 // --- Handler factory ---
 function makeHandlers(ws) {
   return {
@@ -114,6 +247,14 @@ function makeHandlers(ws) {
       writeJSON(ws, 'assets.json', assets);
       res.json(assets);
     },
+    refreshAssetPrices: async (_, res) => {
+      try {
+        const result = await refreshWorkspacePrices(ws);
+        res.json({ ...result, assets: readJSON(ws, 'assets.json') });
+      } catch (err) {
+        res.status(502).json({ error: err.message });
+      }
+    },
     // Properties
     getProperties: (_, res) => res.json(readJSON(ws, 'properties.json')),
     postProperties: (req, res) => {
@@ -155,6 +296,7 @@ function registerRoutes(app, prefix, h) {
 
   app.get(`${prefix}/assets`, h.getAssets);
   app.post(`${prefix}/assets`, h.postAssets);
+  app.post(`${prefix}/assets/refresh`, h.refreshAssetPrices);
 
   app.get(`${prefix}/properties`, h.getProperties);
   app.post(`${prefix}/properties`, h.postProperties);

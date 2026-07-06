@@ -45,6 +45,11 @@ export interface Asset {
   isin?: string; // for etf
   broker?: string; // 'degiro' for etf/broker-cash
   currency?: string; // local currency, e.g. 'EUR'
+  sustainability?: {
+    sfdr?: 6 | 8 | 9; // SFDR-artikel (9 = donkergroen, 8 = lichtgroen, 6 = grijs)
+    themes?: string[]; // bijv. 'water', 'hernieuwbare-energie'
+    note?: string; // toelichting/bron, bijv. "prospectus aanbieder, jul 2026"
+  }; // handmatige classificatie; overschrijft de ingebouwde fondsendatabase
 }
 
 export interface Property {

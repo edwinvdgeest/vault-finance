@@ -113,6 +113,7 @@ export default function Dashboard() {
   const [periodOffset, setPeriodOffset] = useState(0);
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
+  const [renderedAt] = useState(() => Date.now());
   const [cryptoPrices, setCryptoPrices] = useState<Record<string, number>>({});
   const [cryptoHistory, setCryptoHistory] = useState<Record<string, number[]>>({});
 
@@ -228,6 +229,11 @@ export default function Dashboard() {
     fetchAll();
   }, [assets.length]);
 
+  const lastTxDate = transactions.reduce((max, t) => (t.date > max ? t.date : max), '');
+  const daysSinceLastTx = lastTxDate
+    ? Math.floor((renderedAt - new Date(lastTxDate + 'T00:00:00').getTime()) / 86400000)
+    : null;
+
   const isEmpty = accounts.length === 0 && transactions.length === 0 && assets.length === 0 && properties.length === 0;
 
   if (isEmpty) {
@@ -246,6 +252,27 @@ export default function Dashboard() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+      {daysSinceLastTx !== null && daysSinceLastTx > 14 && (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap',
+          padding: '0.75rem 1.25rem', borderRadius: '0.75rem',
+          border: '1px solid rgba(245,158,11,0.4)', background: 'rgba(245,158,11,0.08)',
+        }}>
+          <span style={{ color: '#fbbf24', fontSize: '0.875rem' }}>
+            ⚠️ Laatste transactie is van {lastTxDate} ({daysSinceLastTx} dagen geleden) — recente cijfers zijn onvolledig.
+          </span>
+          <button
+            onClick={() => navigate('/import')}
+            style={{
+              padding: '0.375rem 0.875rem', borderRadius: '2rem', border: '1px solid rgba(245,158,11,0.6)',
+              background: 'rgba(245,158,11,0.15)', color: '#fbbf24', fontSize: '0.8rem', fontWeight: 600,
+              cursor: 'pointer', fontFamily: 'inherit',
+            }}
+          >
+            Nieuwe afschriften importeren
+          </button>
+        </div>
+      )}
       {/* Net worth header */}
       <GlassCard>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>

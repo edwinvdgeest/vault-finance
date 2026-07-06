@@ -1,4 +1,4 @@
-import type { Transaction, Account, Budget, Property } from '../types';
+import type { Transaction, Account, Asset, Budget, Property } from '../types';
 import { toYearMonth, startOfMonth, endOfMonth, formatMonth } from './utils';
 import { getTotalPropertyEquity } from './property';
 
@@ -627,4 +627,79 @@ export function filterByPeriod(transactions: Transaction[], start: Date, end: Da
     const d = new Date(tx.date + 'T00:00:00');
     return d >= startOfMonth(start) && d <= end;
   });
+}
+
+// ── Box 3 (vermogensbelasting) ───────────────────────────────────────────────
+
+export interface Box3AccountLine {
+  name: string;
+  iban: string;
+  balance: number;
+  reliable: boolean; // false wanneer de transactiehistorie pas ná de peildatum begint
+}
+
+export interface Box3AssetLine {
+  name: string;
+  symbol: string;
+  value: number; // huidige holdings × huidige koers — indicatief, niet de waarde op peildatum
+}
+
+export interface Box3Snapshot {
+  year: number;
+  peildatum: string; // YYYY-01-01
+  accounts: Box3AccountLine[];
+  totalCash: number;
+  assets: Box3AssetLine[];
+  totalAssets: number;
+}
+
+/**
+ * Reconstrueert banktegoeden op de box 3-peildatum (1 januari) uit de
+ * transactiehistorie. Beleggingen worden tegen de huidige koers en huidige
+ * aantallen getoond (indicatief): historische koersen en posities zijn niet
+ * beschikbaar in de dataset.
+ */
+export function getBox3Snapshot(
+  accounts: Account[],
+  transactions: Transaction[],
+  assets: Asset[],
+  year: number,
+): Box3Snapshot {
+  const peildatum = `${year}-01-01`;
+  // Saldo t/m 31 december van het voorgaande jaar = stand op de peildatum
+  const asOf = new Date(`${year - 1}-12-31T00:00:00`);
+
+  // Eerste transactiedatum per rekening: als de historie pas ná de peildatum
+  // begint, is het gereconstrueerde saldo mogelijk onvolledig. (startingDate is
+  // vaak de importdatum en zegt weinig over hoe ver de historie teruggaat.)
+  const firstTxDate = new Map<string, string>();
+  for (const tx of transactions) {
+    const cur = firstTxDate.get(tx.account);
+    if (!cur || tx.date < cur) firstTxDate.set(tx.account, tx.date);
+  }
+
+  const accountLines: Box3AccountLine[] = accounts.map(acc => {
+    const firstTx = firstTxDate.get(acc.iban);
+    return {
+      name: acc.name,
+      iban: acc.iban,
+      balance: Math.round(getAccountBalance(acc, transactions, asOf) * 100) / 100,
+      reliable: (firstTx !== undefined && firstTx <= peildatum) || acc.startingDate <= peildatum,
+    };
+  });
+
+  const assetLines: Box3AssetLine[] = assets.map(a => ({
+    name: a.name,
+    symbol: a.symbol,
+    value: Math.round(a.amount * a.currentPrice * 100) / 100,
+  }));
+
+  return {
+    year,
+    peildatum,
+    accounts: accountLines,
+    totalCash: Math.round(accountLines.reduce((s, a) => s + a.balance, 0) * 100) / 100,
+    assets: assetLines,
+    totalAssets: Math.round(assetLines.reduce((s, a) => s + a.value, 0) * 100) / 100,
+  };
 }

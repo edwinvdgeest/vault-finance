@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getAccountBalance, getNetWorth, getMonthlyIncomeExpense, classifyTaxType, getRobustMonthlyNetSavings } from '../analytics';
+import { getAccountBalance, getNetWorth, getMonthlyIncomeExpense, classifyTaxType, getRobustMonthlyNetSavings, getBox3Snapshot } from '../analytics';
 import type { Transaction, Account } from '../../types';
 
 const MARCH_START = new Date('2025-03-01T00:00:00');
@@ -172,5 +172,54 @@ describe('getRobustMonthlyNetSavings', () => {
     // Only 2 months of data, both with +1000. Window says 12 but empty months don't count.
     const txs: Transaction[] = [txInMonth(1, 1000), txInMonth(2, 1000)];
     expect(getRobustMonthlyNetSavings(txs, 12)).toBe(1000);
+  });
+});
+
+describe('getBox3Snapshot', () => {
+  const account: Account = {
+    id: 'acc1',
+    iban: 'NL01TEST0000000001',
+    name: 'Betaalrekening',
+    bank: 'abn',
+    startingBalance: 1000,
+    startingDate: '2024-01-01',
+  };
+
+  it('reconstructs the balance as of 1 January (transactions strictly before the year)', () => {
+    const txs = [
+      makeTx({ date: '2024-06-01', amount: 500 }),
+      makeTx({ date: '2024-12-31', amount: -200 }),
+      makeTx({ date: '2025-01-01', amount: -999 }), // op/na peildatum telt niet mee
+      makeTx({ date: '2025-03-15', amount: -999 }),
+    ];
+    const snap = getBox3Snapshot([account], txs, [], 2025);
+    expect(snap.peildatum).toBe('2025-01-01');
+    expect(snap.accounts[0].balance).toBe(1000 + 500 - 200);
+    expect(snap.totalCash).toBe(1300);
+  });
+
+  it('flags accounts whose history starts after the peildatum as unreliable', () => {
+    const late: Account = { ...account, id: 'acc2', iban: 'NL99LATE0000000001', startingDate: '2025-06-01' };
+    const snap = getBox3Snapshot([account, late], [], [], 2025);
+    expect(snap.accounts.find(a => a.iban === late.iban)?.reliable).toBe(false);
+    expect(snap.accounts.find(a => a.iban === account.iban)?.reliable).toBe(true);
+  });
+
+  it('treats a late startingDate as reliable when transactions predate the peildatum', () => {
+    // startingDate is vaak de importdatum; historie van vóór de peildatum telt
+    const imported: Account = { ...account, id: 'acc3', iban: 'NL77IMP00000000001', startingDate: '2026-03-01' };
+    const txs = [makeTx({ date: '2023-05-01', amount: 100, account: imported.iban })];
+    const snap = getBox3Snapshot([imported], txs, [], 2025);
+    expect(snap.accounts[0].reliable).toBe(true);
+  });
+
+  it('values assets at current holdings and price', () => {
+    const assets = [
+      { type: 'bitcoin', symbol: 'BTC', name: 'Bitcoin', amount: 0.5, currentPrice: 60000, lastPrice: 60000, lastUpdated: '2025-01-01' },
+      { type: 'IE00B3RBWM25', symbol: 'VWRL', name: 'Vanguard FTSE All-World', amount: 10, currentPrice: 110, lastPrice: 110, lastUpdated: '2025-01-01', assetClass: 'etf' as const },
+    ];
+    const snap = getBox3Snapshot([], [], assets, 2025);
+    expect(snap.totalAssets).toBe(30000 + 1100);
+    expect(snap.assets).toHaveLength(2);
   });
 });

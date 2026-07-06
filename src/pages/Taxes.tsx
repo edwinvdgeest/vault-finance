@@ -4,7 +4,7 @@ import {
   BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 import { storage } from '../lib/storage';
-import { getTaxBreakdown } from '../lib/analytics';
+import { getTaxBreakdown, getBox3Snapshot } from '../lib/analytics';
 import type { TaxYearBreakdown, TaxType } from '../lib/analytics';
 import { formatCurrency, formatDate } from '../lib/utils';
 
@@ -29,6 +29,8 @@ const TYPE_COLORS: Record<TaxType, string> = {
 export default function Taxes() {
   const navigate = useNavigate();
   const transactions = storage.getTransactions();
+  const accounts = storage.getAccounts();
+  const assets = storage.getAssets();
 
   const allYears = useMemo(() => getTaxBreakdown(transactions), [transactions]);
   const availableYears = allYears.map(y => y.year);
@@ -49,6 +51,11 @@ export default function Taxes() {
   const yearIdx = availableYears.indexOf(selectedYear);
   const canGoBack = yearIdx < availableYears.length - 1;
   const canGoForward = yearIdx > 0;
+
+  const box3 = useMemo(
+    () => (accounts.length > 0 ? getBox3Snapshot(accounts, transactions, assets, parseInt(selectedYear)) : null),
+    [accounts, transactions, assets, selectedYear],
+  );
 
   function navToTransactions(type: TaxType) {
     const params = new URLSearchParams({
@@ -215,6 +222,53 @@ export default function Taxes() {
                     </div>
                   ))}
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* Box 3 vermogen op peildatum */}
+          {box3 && (
+            <div className="glass-card" style={{ padding: '1.25rem' }}>
+              <p className="section-title">Box 3 vermogen — peildatum {formatDate(box3.peildatum)}</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                {box3.accounts.map(acc => (
+                  <div
+                    key={acc.iban}
+                    style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem',
+                      padding: '0.5rem 0.75rem',
+                      background: 'rgba(255,255,255,0.03)', borderRadius: '0.375rem',
+                      border: '1px solid rgba(255,255,255,0.05)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
+                      <span style={{ fontSize: '0.85rem', color: '#cbd5e1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{acc.name}</span>
+                      <span style={{ fontSize: '0.68rem', color: '#475569' }}>{acc.iban.slice(-4)}</span>
+                      {!acc.reliable && (
+                        <span title="Peildatum ligt vóór de startdatum van deze rekening — saldo mogelijk onvolledig" style={{ fontSize: '0.6rem', color: '#f59e0b', background: 'rgba(245,158,11,0.1)', padding: '0.05rem 0.3rem', borderRadius: '0.5rem', fontWeight: 600 }}>
+                          onvolledig
+                        </span>
+                      )}
+                    </div>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 600, whiteSpace: 'nowrap' }}>{formatCurrency(acc.balance)}</span>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0.75rem', fontWeight: 700, fontSize: '0.9rem' }}>
+                  <span>Totaal banktegoeden</span>
+                  <span style={{ color: '#06b6d4' }}>{formatCurrency(box3.totalCash)}</span>
+                </div>
+                {box3.assets.length > 0 && (
+                  <>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0.75rem', fontSize: '0.85rem', color: '#94a3b8' }}>
+                      <span>Beleggingen &amp; crypto (huidige stand — controleer waarde op peildatum)</span>
+                      <span>{formatCurrency(box3.totalAssets)}</span>
+                    </div>
+                  </>
+                )}
+                <p style={{ fontSize: '0.7rem', color: '#64748b', margin: '0.25rem 0.75rem 0' }}>
+                  Banktegoeden zijn gereconstrueerd uit de transactiehistorie t/m 31 december {parseInt(selectedYear) - 1}.
+                  Beleggingen tonen huidige aantallen × huidige koers en zijn indicatief voor de aangifte.
+                </p>
               </div>
             </div>
           )}

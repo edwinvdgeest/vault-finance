@@ -7,6 +7,7 @@ import Settings from './pages/Settings';
 import Calendar from './pages/Calendar';
 import Projections from './pages/Projections';
 import Taxes from './pages/Taxes';
+import Sustainability from './pages/Sustainability';
 import SaveErrorToast from './components/SaveErrorToast';
 import { WorkspaceProvider, useWorkspace } from './contexts/WorkspaceContext';
 
@@ -19,6 +20,7 @@ function AppRoutes() {
       <Route path="/calendar" element={<Calendar />} />
       <Route path="/projections" element={<Projections />} />
       <Route path="/taxes" element={<Taxes />} />
+      <Route path="/sustainability" element={<Sustainability />} />
       <Route path="/import" element={<Import />} />
       <Route path="/settings" element={<Settings />} />
     </Routes>

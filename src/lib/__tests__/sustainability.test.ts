@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { assessAsset, analyzeFundName, scorePortfolio, suggestFunds, findFund } from '../sustainability';
+import { assessAsset, analyzeFundName, scorePortfolio, suggestFunds, findFund, simulateInvestment } from '../sustainability';
 import type { Asset } from '../../types';
 
 function makeAsset(overrides: Partial<Asset> = {}): Asset {
@@ -123,6 +123,39 @@ describe('scorePortfolio', () => {
     expect(score.pctStrict).toBe(50);
     expect(score.pctImpact).toBe(20);
     expect(score.byTheme.find(t => t.theme === 'water')?.value).toBe(600);
+  });
+});
+
+describe('simulateInvestment', () => {
+  it('adds the amount at the given level and recomputes percentages', () => {
+    const score = scorePortfolio([
+      makeAsset({ amount: 10, currentPrice: 60 }), // 600 → niveau 2
+      makeAsset({
+        isin: 'XX0000000000', type: 'XX0000000000', symbol: 'XXX',
+        name: 'Onbekend fonds', amount: 14, currentPrice: 100,
+      }), // 1400 → niveau 0
+    ]);
+    expect(score.pctSustainable).toBe(30);
+
+    const sim = simulateInvestment(score, 2000, 2);
+    expect(sim.totalValue).toBe(4000);
+    expect(sim.byLevel[2]).toBe(2600);
+    expect(sim.pctSustainable).toBe(65);
+    expect(sim.pctStrict).toBe(65);
+    // origineel onaangetast
+    expect(score.byLevel[2]).toBe(600);
+  });
+
+  it('works from an empty portfolio (investing from savings only)', () => {
+    const sim = simulateInvestment(scorePortfolio([]), 10000, 3);
+    expect(sim.pctSustainable).toBe(100);
+    expect(sim.pctImpact).toBe(100);
+  });
+
+  it('ignores negative amounts', () => {
+    const score = scorePortfolio([makeAsset({ amount: 10, currentPrice: 60 })]);
+    const sim = simulateInvestment(score, -500, 2);
+    expect(sim.totalValue).toBe(600);
   });
 });
 

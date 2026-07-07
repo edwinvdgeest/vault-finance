@@ -10,7 +10,7 @@ Persoonlijke financiële dashboard voor het analyseren van bankafschriften van b
 - Dashboard met netto vermogen, uitgaven per categorie en trend-grafieken
 - Automatische koersverversing voor crypto (CoinGecko) en ETF's (Yahoo Finance), instelbaar via `PRICE_REFRESH_INTERVAL_MIN` (default 360, 0 = uit)
 - Box 3-overzicht per peildatum op de Belasting-pagina
-- Duurzaam-pagina: duurzaamheidsniveau van je portfolio (impact / streng / licht / geen) op basis van SFDR, gereguleerde indexlabels (SRI, Paris-Aligned, Climate Transition) en themadetectie (water, hernieuwbare energie) — met uitlegbare signalen per holding, handmatige classificatie en fondssuggesties per thema; via MCP kan Claude fondsen onderzoeken en de classificatie met bron opslaan
+- Duurzaam-pagina: duurzaamheidsniveau van je portfolio (impact / streng / licht / geen) op basis van SFDR, gereguleerde indexlabels (SRI, Paris-Aligned, Climate Transition) en themadetectie (water, hernieuwbare energie) — met uitlegbare signalen per holding, handmatige classificatie, fondssuggesties per thema, een wat-als-simulator (spaargeld → duurzaam) en historische performance (1/3/5 jaar, via Yahoo Finance); via MCP kan Claude fondsen onderzoeken en de classificatie met bron opslaan
 - Drie werkruimtes (privé, holding, ouders) met gescheiden data
 - Projecties (Monte Carlo, FIRE) en what-if scenario's
 - MCP-server voor Claude: samenvattingen, transacties zoeken, terugkerende lasten, box 3 en transacties bijwerken

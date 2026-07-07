@@ -177,6 +177,57 @@ async function refreshWorkspacePrices(ws) {
   return { updated, skipped };
 }
 
+// ── Koershistorie (voor performance-grafieken) ───────────────────────────────
+// Proxy naar Yahoo Finance (omzeilt CORS in de browser) met in-memory cache.
+const HISTORY_RANGES = { '1y': '1d', '3y': '1wk', '5y': '1wk', 'max': '1mo' };
+const HISTORY_TTL_MS = 6 * 60 * 60 * 1000;
+const historyCache = new Map(); // `${q}|${range}` → { ts, data }
+
+async function fetchChartSeries(symbol, range) {
+  const interval = HISTORY_RANGES[range];
+  const chart = await fetchJson(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}`);
+  const result = chart.chart?.result?.[0];
+  const meta = result?.meta;
+  const timestamps = result?.timestamp ?? [];
+  const closes = result?.indicators?.quote?.[0]?.close ?? [];
+  if (!meta?.regularMarketPrice || timestamps.length === 0) return null;
+  const points = timestamps
+    .map((t, i) => [new Date(t * 1000).toISOString().slice(0, 10), closes[i]])
+    .filter(([, c]) => c != null)
+    .map(([d, c]) => [d, Math.round(c * 10000) / 10000]);
+  if (points.length < 2) return null;
+  return { symbol, currency: meta.currency, points };
+}
+
+async function getPriceHistory(q, range) {
+  const key = `${q}|${range}`;
+  const cached = historyCache.get(key);
+  if (cached && Date.now() - cached.ts < HISTORY_TTL_MS) return cached.data;
+
+  // Zelfde resolutie als de koersverversing: EUR-notering heeft voorkeur,
+  // anders de eerst gevonden notering (voor rendement in % maakt de valuta
+  // van de notering weinig uit).
+  const pseudoAsset = { symbol: q, isin: ISIN_RE.test(q.toUpperCase()) ? q.toUpperCase() : undefined, type: q };
+  let fallback = null;
+  let data = null;
+  for (const symbol of await yahooSymbolCandidates(pseudoAsset)) {
+    try {
+      const series = await fetchChartSeries(symbol, range);
+      if (!series) continue;
+      if (series.currency === 'EUR') { data = series; break; }
+      if (!fallback) fallback = series;
+    } catch {
+      // volgende kandidaat
+    }
+  }
+  data = data ?? fallback;
+  if (data) {
+    historyCache.set(key, { ts: Date.now(), data });
+    if (historyCache.size > 200) historyCache.delete(historyCache.keys().next().value);
+  }
+  return data;
+}
+
 async function refreshAllPrices() {
   for (const ws of WORKSPACES) {
     try {
@@ -322,6 +373,21 @@ app.get('/api/workspaces', (_, res) => {
     return def ?? { slug, label: slug, accent: '#64748b' };
   });
   res.json(descriptors);
+});
+
+// --- Koershistorie (marktdata, niet workspace-gebonden) ---
+app.get('/api/prices/history', async (req, res) => {
+  const q = (req.query.q || '').toString().trim();
+  const range = (req.query.range || '3y').toString();
+  if (!q) return res.status(400).json({ error: 'q (ISIN/ticker) is verplicht' });
+  if (!HISTORY_RANGES[range]) return res.status(400).json({ error: `range moet een van ${Object.keys(HISTORY_RANGES).join(', ')} zijn` });
+  try {
+    const data = await getPriceHistory(q, range);
+    if (!data) return res.status(404).json({ error: `Geen koershistorie gevonden voor "${q}"` });
+    res.json(data);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
 });
 
 // --- Health (referenced by docker-compose healthcheck) ---

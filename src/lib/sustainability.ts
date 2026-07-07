@@ -334,6 +334,36 @@ export function scorePortfolio(assets: Asset[]): PortfolioSustainability {
   };
 }
 
+export interface InvestmentSimulation {
+  byLevel: Record<SustainLevel, number>;
+  totalValue: number;
+  pctSustainable: number;
+  pctStrict: number;
+  pctImpact: number;
+}
+
+/**
+ * Wat-als: simuleer een extra investering op een gegeven duurzaamheidsniveau
+ * bovenop de huidige portefeuille (bijv. spaargeld → duurzaam themafonds).
+ */
+export function simulateInvestment(
+  score: PortfolioSustainability,
+  amount: number,
+  level: SustainLevel = 2,
+): InvestmentSimulation {
+  const byLevel: Record<SustainLevel, number> = { ...score.byLevel };
+  byLevel[level] += Math.max(0, amount);
+  const totalValue = score.totalValue + Math.max(0, amount);
+  const pct = (v: number) => (totalValue > 0 ? Math.round((v / totalValue) * 1000) / 10 : 0);
+  return {
+    byLevel,
+    totalValue,
+    pctSustainable: pct(byLevel[1] + byLevel[2] + byLevel[3]),
+    pctStrict: pct(byLevel[2] + byLevel[3]),
+    pctImpact: pct(byLevel[3]),
+  };
+}
+
 /** Fondssuggesties per thema, zonder fondsen die al in de portefeuille zitten. */
 export function suggestFunds(theme?: SustainTheme, ownedAssets: Asset[] = []): FundInfo[] {
   const owned = new Set(

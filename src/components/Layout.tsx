@@ -60,6 +60,15 @@ function IconReceipt() {
   );
 }
 
+function IconRepeat() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 1l4 4-4 4" /><path d="M3 11V9a4 4 0 0 1 4-4h14" />
+      <path d="M7 23l-4-4 4-4" /><path d="M21 13v2a4 4 0 0 1-4 4H3" />
+    </svg>
+  );
+}
+
 function IconLeaf() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -81,6 +90,7 @@ function IconSettings() {
 const NAV = [
   { to: '/', label: 'Dashboard', shortLabel: 'Dashboard', exact: true, Icon: IconGrid },
   { to: '/transactions', label: 'Transacties', shortLabel: 'Transacties', Icon: IconList },
+  { to: '/vaste-lasten', label: 'Vaste lasten', shortLabel: 'Vast', Icon: IconRepeat },
   { to: '/calendar', label: 'Kalender', shortLabel: 'Kalender', Icon: IconCalendar },
   { to: '/projections', label: 'Projecties', shortLabel: 'Projecties', Icon: IconTrendUp },
   { to: '/taxes', label: 'Belasting', shortLabel: 'Belasting', Icon: IconReceipt },

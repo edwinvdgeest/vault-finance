@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import Transactions from './pages/Transactions';
+import VasteLasten from './pages/VasteLasten';
 import Import from './pages/Import';
 import Settings from './pages/Settings';
 import Calendar from './pages/Calendar';
@@ -17,6 +18,7 @@ function AppRoutes() {
     <Routes key={workspace}>
       <Route path="/" element={<Dashboard />} />
       <Route path="/transactions" element={<Transactions />} />
+      <Route path="/vaste-lasten" element={<VasteLasten />} />
       <Route path="/calendar" element={<Calendar />} />
       <Route path="/projections" element={<Projections />} />
       <Route path="/taxes" element={<Taxes />} />

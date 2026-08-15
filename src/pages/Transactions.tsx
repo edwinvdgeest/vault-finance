@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { storage } from '../lib/storage';
 import { formatCurrency, formatDate } from '../lib/utils';
 import { getCategories } from '../lib/categories';
+import { normalizeMerchant } from '../lib/merchant';
 import type { Transaction } from '../types';
 
 const inputStyle: React.CSSProperties = {
@@ -360,8 +361,14 @@ export default function Transactions() {
     storage.updateTransaction(tx.id, { category: newCategory });
 
     if (tx.name) {
+      // Regel op de genormaliseerde merchant-key (bv. "lidl") i.p.v. de volledige
+      // ruwe naam, zodat een correctie generaliseert naar alle filiaal-varianten
+      // (store-nummer/plaatsnaam/PAS-suffix). Bij een te korte/generieke key
+      // terugvallen op het oude gedrag om te brede regels te voorkomen.
+      const { key } = normalizeMerchant(tx.name, tx.counterparty);
+      const patternSource = key.length >= 3 ? key : tx.name.toLowerCase();
+      const pattern = patternSource.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const existing = storage.getRules();
-      const pattern = tx.name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const alreadyExists = existing.some(r => r.pattern === pattern && r.category === newCategory);
       if (!alreadyExists) {
         storage.setRules([

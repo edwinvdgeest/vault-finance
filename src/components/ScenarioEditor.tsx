@@ -84,6 +84,7 @@ export default function ScenarioEditor({
   const [draftStart, setDraftStart] = useState<string>(monthOffsetYM(1));
   const [draftEnd, setDraftEnd] = useState<string>(monthOffsetYM(3));
   const [formOpen, setFormOpen] = useState(false);
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
 
   const selected = scenarios.find(s => s.id === selectedId) ?? null;
 
@@ -118,8 +119,29 @@ export default function ScenarioEditor({
     if (compareIds.includes(id)) onCompareChange(compareIds.filter(x => x !== id));
   }
 
+  function duplicateScenario(id: string) {
+    const src = scenarios.find(s => s.id === id);
+    if (!src) return;
+    const copy: Scenario = {
+      ...src,
+      id: makeId('scn'),
+      label: `${src.label} (kopie)`,
+      events: src.events.map(e => ({ ...e, id: makeId('ev') })),
+      createdAt: new Date().toISOString(),
+    };
+    saveScenarios([...scenarios, copy]);
+    setSelectedId(copy.id);
+  }
+
+  function closeEventForm() {
+    setFormOpen(false);
+    setEditingEventId(null);
+    setDraftLabel('');
+  }
+
   function applyPreset(preset: Preset) {
     const build = preset.build();
+    setEditingEventId(null);
     setDraftLabel(build.label);
     setDraftKind(build.kind);
     setDraftAmount(build.amount);
@@ -128,23 +150,42 @@ export default function ScenarioEditor({
     setFormOpen(true);
   }
 
-  function addEventToSelected() {
+  function startEditEvent(ev: ScenarioEvent) {
+    setEditingEventId(ev.id);
+    setDraftLabel(ev.label);
+    setDraftKind(ev.kind);
+    setDraftAmount(ev.amount);
+    setDraftStart(ev.startMonth);
+    setDraftEnd(ev.endMonth ?? monthOffsetYM(3));
+    setFormOpen(true);
+  }
+
+  function saveEvent() {
     if (!selected || !draftLabel.trim()) return;
-    const ev: ScenarioEvent = {
-      id: makeId('ev'),
+    const eventData: Omit<ScenarioEvent, 'id'> = {
       label: draftLabel.trim(),
       kind: draftKind,
       amount: draftAmount,
       startMonth: draftStart,
       ...(draftKind === 'recurring' ? { endMonth: draftEnd } : {}),
     };
-    saveScenarios(scenarios.map(s => (s.id === selected.id ? { ...s, events: [...s.events, ev] } : s)));
-    setFormOpen(false);
-    setDraftLabel('');
+    if (editingEventId) {
+      const eventId = editingEventId;
+      saveScenarios(scenarios.map(s => (
+        s.id === selected.id
+          ? { ...s, events: s.events.map(e => (e.id === eventId ? { id: e.id, ...eventData } : e)) }
+          : s
+      )));
+    } else {
+      const ev: ScenarioEvent = { id: makeId('ev'), ...eventData };
+      saveScenarios(scenarios.map(s => (s.id === selected.id ? { ...s, events: [...s.events, ev] } : s)));
+    }
+    closeEventForm();
   }
 
   function deleteEvent(scenarioId: string, eventId: string) {
     saveScenarios(scenarios.map(s => (s.id === scenarioId ? { ...s, events: s.events.filter(e => e.id !== eventId) } : s)));
+    if (editingEventId === eventId) closeEventForm();
   }
 
   function toggleCompare(id: string) {
@@ -209,7 +250,7 @@ export default function ScenarioEditor({
               cursor: 'pointer',
               borderColor: isSelected ? 'rgba(139,92,246,0.5)' : 'rgba(255,255,255,0.08)',
               background: isSelected ? 'rgba(139,92,246,0.08)' : cardStyle.background,
-            }} onClick={() => setSelectedId(s.id)}>
+            }} onClick={() => { setSelectedId(s.id); closeEventForm(); }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span style={{ width: 10, height: 10, borderRadius: '50%', background: s.color ?? '#8b5cf6', flexShrink: 0 }} />
                 <input
@@ -221,6 +262,11 @@ export default function ScenarioEditor({
                     fontSize: '0.85rem', fontWeight: 600, fontFamily: 'inherit', padding: 0, minWidth: 0,
                   }}
                 />
+                <button
+                  onClick={e => { e.stopPropagation(); duplicateScenario(s.id); }}
+                  style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '0.95rem', lineHeight: 1 }}
+                  title="Dupliceer scenario"
+                >⧉</button>
                 <button
                   onClick={e => { e.stopPropagation(); deleteScenario(s.id); }}
                   style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1.1rem', lineHeight: 1 }}
@@ -303,7 +349,7 @@ export default function ScenarioEditor({
                     {p.emoji} {p.label}
                   </button>
                 ))}
-                <button onClick={() => { setFormOpen(true); setDraftLabel(''); setDraftKind('oneOff'); setDraftAmount(-1000); setDraftStart(monthOffsetYM(1)); }}
+                <button onClick={() => { setFormOpen(true); setEditingEventId(null); setDraftLabel(''); setDraftKind('oneOff'); setDraftAmount(-1000); setDraftStart(monthOffsetYM(1)); }}
                   style={{
                     padding: '0.35rem 0.7rem', fontSize: '0.75rem', fontWeight: 600,
                     background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.4)',
@@ -317,6 +363,9 @@ export default function ScenarioEditor({
             {/* Inline event form */}
             {formOpen && (
               <div style={{ ...cardStyle, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <p style={{ fontSize: '0.7rem', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0 }}>
+                  {editingEventId ? 'Event bewerken' : 'Nieuw event'}
+                </p>
                 <input
                   value={draftLabel}
                   onChange={e => setDraftLabel(e.target.value)}
@@ -352,11 +401,11 @@ export default function ScenarioEditor({
                   )}
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                  <button onClick={() => setFormOpen(false)}
+                  <button onClick={closeEventForm}
                     style={{ padding: '0.35rem 0.8rem', fontSize: '0.75rem', background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '0.375rem', color: '#94a3b8', cursor: 'pointer', fontFamily: 'inherit' }}>
                     Annuleer
                   </button>
-                  <button onClick={addEventToSelected} disabled={!draftLabel.trim()}
+                  <button onClick={saveEvent} disabled={!draftLabel.trim()}
                     style={{
                       padding: '0.35rem 0.8rem', fontSize: '0.75rem', fontWeight: 600,
                       background: 'rgba(139,92,246,0.2)', border: '1px solid rgba(139,92,246,0.5)',
@@ -365,7 +414,7 @@ export default function ScenarioEditor({
                       opacity: draftLabel.trim() ? 1 : 0.5,
                       fontFamily: 'inherit',
                     }}>
-                    Opslaan
+                    {editingEventId ? 'Bijwerken' : 'Opslaan'}
                   </button>
                 </div>
               </div>
@@ -379,8 +428,14 @@ export default function ScenarioEditor({
             )}
             {selected.events.map(ev => {
               const isExpense = ev.amount < 0;
+              const isEditing = editingEventId === ev.id;
               return (
-                <div key={ev.id} style={{ ...cardStyle, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <div key={ev.id} onClick={() => startEditEvent(ev)} style={{
+                  ...cardStyle,
+                  display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer',
+                  borderColor: isEditing ? 'rgba(139,92,246,0.5)' : 'rgba(255,255,255,0.08)',
+                  background: isEditing ? 'rgba(139,92,246,0.08)' : cardStyle.background,
+                }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#e2e8f0' }}>{ev.label}</span>
@@ -400,7 +455,7 @@ export default function ScenarioEditor({
                     {isExpense ? '-' : '+'}{formatCurrency(Math.abs(ev.amount))}
                     {ev.kind === 'recurring' && <span style={{ fontSize: '0.65rem', color: '#64748b', marginLeft: '0.25rem' }}>/mnd</span>}
                   </div>
-                  <button onClick={() => deleteEvent(selected.id, ev.id)}
+                  <button onClick={e => { e.stopPropagation(); deleteEvent(selected.id, ev.id); }}
                     style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1.1rem', lineHeight: 1 }}
                     title="Verwijder event"
                   >×</button>

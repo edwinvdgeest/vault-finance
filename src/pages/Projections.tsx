@@ -106,7 +106,10 @@ export default function Projections() {
   );
 
   const activeScenario = scenariosState.find(s => s.id === activeScenarioId) ?? null;
-  const compareScenarios = scenariosState.filter(s => compareScenarioIds.includes(s.id));
+  const compareScenarios = useMemo(
+    () => scenariosState.filter(s => compareScenarioIds.includes(s.id)),
+    [scenariosState, compareScenarioIds],
+  );
 
   function handleScenariosChange(next: Scenario[]) {
     setScenariosState(next);
@@ -165,10 +168,13 @@ export default function Projections() {
   }), [startCapital, monthlyContrib, annualReturn, volatility, inflation, years, goalAmount, adjustInflation, phases, showPhases, tab, fireNumber, includeProperty, aggregatedProperty]);
 
   // Projection params with active scenario events applied
+  // NB: depend on activeScenario?.id / .events (not the whole object) so that
+  // renaming a scenario (which creates a new object reference via `{...s, label}`)
+  // doesn't retrigger the Monte Carlo simulation with fresh randomness.
   const baseParams = useMemo(() => ({
     ...baselineParams,
     events: activeScenario?.events,
-  }), [baselineParams, activeScenario]);
+  }), [baselineParams, activeScenario?.id, activeScenario?.events]);
 
   // Main projection (active scenario)
   const result: ProjectionResult = useMemo(() => runProjection(baseParams), [baseParams]);
@@ -177,12 +183,12 @@ export default function Projections() {
   const baselineResult: ProjectionResult = useMemo(() => {
     if (!activeScenario && compareScenarios.length === 0) return result;
     return runProjection(baselineParams);
-  }, [baselineParams, activeScenario, compareScenarios.length, result]);
+  }, [baselineParams, activeScenario?.id, compareScenarios.length, result]);
 
   // Short-term cashflow forecast (deterministic, 24 months)
   const cashflow = useMemo(
     () => forecastCashflow(transactions, accounts, activeScenario?.events ?? [], 24, cashflowBaselineOverride),
-    [transactions, accounts, activeScenario, cashflowBaselineOverride],
+    [transactions, accounts, activeScenario?.events, cashflowBaselineOverride],
   );
 
   // Compare-mode scenario overlay (median lines per selected scenario)

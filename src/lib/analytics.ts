@@ -1,9 +1,10 @@
 import type { Transaction, Account, Asset, Budget, Property } from '../types';
 import { toYearMonth, startOfMonth, endOfMonth, formatMonth } from './utils';
 import { getTotalPropertyEquity } from './property';
+import { normalizeMerchant } from './merchant';
 
 /** Returns true for transactions that should be excluded from income/expense reporting */
-function isTransfer(tx: Transaction): boolean {
+export function isTransfer(tx: Transaction): boolean {
   return !!tx.isInternal;
 }
 
@@ -286,53 +287,6 @@ export function getRobustMonthlyNetSavings(transactions: Transaction[], months =
   return values.length % 2 === 0 ? (values[mid - 1] + values[mid]) / 2 : values[mid];
 }
 
-export function getRecurringExpenses(
-  transactions: Transaction[],
-): { name: string; avgAmount: number; months: number; category: string }[] {
-  // Look at last 6 months of data to find recurring expenses
-  const now = new Date();
-  const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
-
-  // Group expenses by normalized name per month
-  const nameMonths = new Map<string, Map<string, number[]>>();
-
-  for (const tx of transactions) {
-    if (tx.amount >= 0 || isTransfer(tx) || tx.category === 'Inkomen') continue;
-    const d = new Date(tx.date + 'T00:00:00');
-    if (d < sixMonthsAgo) continue;
-    const month = toYearMonth(d);
-    const name = (tx.name || tx.counterparty || tx.description.split('—')[0] || '').toLowerCase().trim();
-    if (!name) continue;
-
-    if (!nameMonths.has(name)) nameMonths.set(name, new Map());
-    const monthMap = nameMonths.get(name)!;
-    if (!monthMap.has(month)) monthMap.set(month, []);
-    monthMap.get(month)!.push(Math.abs(tx.amount));
-  }
-
-  const results: { name: string; avgAmount: number; months: number; category: string }[] = [];
-
-  for (const [name, monthMap] of nameMonths) {
-    if (monthMap.size < 3) continue; // must appear in ≥3 of last 6 months
-    const allAmounts = [...monthMap.values()].flat();
-    const avgAmount = allAmounts.reduce((s, a) => s + a, 0) / monthMap.size;
-
-    // Find original cased name and category from most recent tx
-    const recentTx = transactions
-      .filter(tx => (tx.name || tx.counterparty).toLowerCase().trim() === name && tx.amount < 0)
-      .sort((a, b) => b.date.localeCompare(a.date))[0];
-
-    results.push({
-      name: recentTx ? (recentTx.name || recentTx.counterparty) : name,
-      avgAmount: Math.round(avgAmount * 100) / 100,
-      months: monthMap.size,
-      category: recentTx?.category ?? '',
-    });
-  }
-
-  return results.sort((a, b) => b.avgAmount - a.avgAmount);
-}
-
 export function getCategoryTrend(
   transactions: Transaction[],
   monthCount = 6,
@@ -427,16 +381,17 @@ export function getTopMerchants(
     months.push(toYearMonth(new Date(now.getFullYear(), now.getMonth() - i, 1)));
   }
 
-  // Group by merchant name
-  const merchants = new Map<string, { total: number; count: number; monthMap: Map<string, number> }>();
+  // Group by genormaliseerde merchant (samengevoegde filiaal-varianten, zie merchant.ts)
+  const merchants = new Map<string, { displayName: string; total: number; count: number; monthMap: Map<string, number> }>();
 
   for (const tx of transactions) {
     if (tx.amount >= 0 || isTransfer(tx)) continue;
-    const name = (tx.name || tx.counterparty).trim();
-    if (!name) continue;
+    const raw = (tx.name || tx.counterparty).trim();
+    if (!raw) continue;
+    const { key, displayName } = normalizeMerchant(tx.name, tx.counterparty);
 
-    if (!merchants.has(name)) merchants.set(name, { total: 0, count: 0, monthMap: new Map() });
-    const m = merchants.get(name)!;
+    if (!merchants.has(key)) merchants.set(key, { displayName, total: 0, count: 0, monthMap: new Map() });
+    const m = merchants.get(key)!;
     m.total += Math.abs(tx.amount);
     m.count += 1;
 
@@ -446,12 +401,12 @@ export function getTopMerchants(
     }
   }
 
-  return [...merchants.entries()]
-    .filter(([, m]) => m.count >= 2)
-    .sort(([, a], [, b]) => b.total - a.total)
+  return [...merchants.values()]
+    .filter(m => m.count >= 2)
+    .sort((a, b) => b.total - a.total)
     .slice(0, limit)
-    .map(([name, m]) => ({
-      name,
+    .map(m => ({
+      name: m.displayName,
       total: Math.round(m.total * 100) / 100,
       count: m.count,
       trend: months.map(mo => Math.round((m.monthMap.get(mo) ?? 0) * 100) / 100),

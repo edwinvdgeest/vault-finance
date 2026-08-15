@@ -16,7 +16,16 @@ import {
   scorePortfolio, suggestFunds, THEME_LABELS, LEVEL_LABELS,
 } from '../src/lib/sustainability';
 import type { SustainTheme, SustainLevel } from '../src/lib/sustainability';
-import type { Asset as LibAsset } from '../src/types';
+import { runProjection } from '../src/lib/projections';
+import type { ProjectionParams, PropertyProjection } from '../src/lib/projections';
+import { forecastCashflow } from '../src/lib/cashflow';
+import { getRobustMonthlyNetSavings } from '../src/lib/analytics';
+import { getTotalPropertyEquity, getMonthlyPayment } from '../src/lib/property';
+import { normalizeMerchant } from '../src/lib/merchant';
+import { getRecurringItems, intervalLabel, type RecurringItem } from '../src/lib/recurring';
+import type {
+  Asset as LibAsset, Account as LibAccount, Property as LibProperty, Scenario, ScenarioEvent,
+} from '../src/types';
 
 const API = process.env.VAULT_API_URL || 'http://localhost:3001';
 const DEFAULT_WORKSPACE = 'personal';
@@ -452,25 +461,25 @@ server.tool(
 
     const filtered = txs.filter(t => t.date >= startStr && t.date <= endStr && !t.isInternal && t.amount < 0);
 
-    const map = new Map<string, { total: number; count: number; category: string }>();
+    const map = new Map<string, { displayName: string; total: number; count: number; category: string }>();
     for (const t of filtered) {
-      const key = t.name || t.counterparty || 'Onbekend';
-      const entry = map.get(key) ?? { total: 0, count: 0, category: t.category };
+      const { key, displayName } = normalizeMerchant(t.name, t.counterparty);
+      const entry = map.get(key) ?? { displayName, total: 0, count: 0, category: t.category };
       entry.total += Math.abs(t.amount);
       entry.count++;
       map.set(key, entry);
     }
 
-    const sorted = [...map.entries()].sort((a, b) => b[1].total - a[1].total);
+    const sorted = [...map.values()].sort((a, b) => b.total - a.total);
     const max = limit ?? 20;
-    const grandTotal = sorted.reduce((s, [, v]) => s + v.total, 0);
+    const grandTotal = sorted.reduce((s, v) => s + v.total, 0);
 
     const lines = [
       `## Top merchants (${startStr} t/m ${endStr})`,
       '',
-      ...sorted.slice(0, max).map(([name, { total, count, category }], i) => {
+      ...sorted.slice(0, max).map(({ displayName, total, count, category }, i) => {
         const pct = ((total / grandTotal) * 100).toFixed(1);
-        return `${i + 1}. **${name}** — ${fmt(total)} (${count}x, ${pct}%) [${category}]`;
+        return `${i + 1}. **${displayName}** — ${fmt(total)} (${count}x, ${pct}%) [${category}]`;
       }),
     ];
 
@@ -482,7 +491,7 @@ server.tool(
 
 server.tool(
   'vault_recurring',
-  'Detecteer actieve terugkerende uitgaven (abonnementen, vaste lasten) met interval en maandbedrag',
+  'Detecteer actieve terugkerende uitgaven (abonnementen, vaste lasten) met interval, maandbedrag, volgende verwachte datum en prijswijzigingen',
   {
     min_occurrences: z.number().optional().describe('Minimaal aantal keer voorgekomen (default: 3)'),
     include_inactive: z.boolean().optional().describe('Toon ook gestopte abonnementen (default: false)'),
@@ -492,66 +501,24 @@ server.tool(
     const txs = await api<Transaction[]>('/transactions', workspace);
     const minOcc = min_occurrences ?? 3;
 
-    const filtered = txs.filter(t => t.amount < 0 && !t.isInternal);
-    const map = new Map<string, { amounts: number[]; dates: string[]; category: string }>();
-
-    for (const t of filtered) {
-      const key = t.name || t.counterparty;
-      if (!key) continue;
-      const entry = map.get(key) ?? { amounts: [], dates: [], category: t.category };
-      entry.amounts.push(Math.abs(t.amount));
-      entry.dates.push(t.date);
-      map.set(key, entry);
-    }
-
     // "Actief" wordt beoordeeld t.o.v. de laatste transactie in de dataset,
     // zodat een verouderde import niet alles als gestopt markeert.
-    const refDate = filtered.reduce((max, t) => (t.date > max ? t.date : max), '');
-    const refTime = refDate ? new Date(refDate + 'T00:00:00').getTime() : Date.now();
+    const refDate = txs
+      .filter(t => t.amount < 0 && !t.isInternal)
+      .reduce((max, t) => (t.date > max ? t.date : max), '');
 
-    function median(nums: number[]): number {
-      const s = [...nums].sort((a, b) => a - b);
-      const mid = Math.floor(s.length / 2);
-      return s.length % 2 === 0 ? (s[mid - 1] + s[mid]) / 2 : s[mid];
-    }
-
-    function intervalLabel(days: number): string {
-      if (days <= 10) return 'wekelijks';
-      if (days <= 45) return 'maandelijks';
-      if (days <= 130) return 'per kwartaal';
-      if (days <= 250) return 'halfjaarlijks';
-      return 'jaarlijks';
-    }
-
-    const analyzed = [...map.entries()]
-      .filter(([, v]) => v.amounts.length >= minOcc)
-      .map(([name, { amounts, dates, category }]) => {
-        const avg = amounts.reduce((s, a) => s + a, 0) / amounts.length;
-        const variance = amounts.reduce((s, a) => s + Math.pow(a - avg, 2), 0) / amounts.length;
-        const cv = Math.sqrt(variance) / avg; // coefficient of variation
-        dates.sort();
-        const times = dates.map(d => new Date(d + 'T00:00:00').getTime());
-        const gaps: number[] = [];
-        for (let i = 1; i < times.length; i++) gaps.push((times[i] - times[i - 1]) / 86400000);
-        const interval = median(gaps);
-        const daysSinceLast = (refTime - times[times.length - 1]) / 86400000;
-        const monthly = interval > 0 ? avg * (30.44 / interval) : avg;
-        const active = daysSinceLast <= Math.max(2 * interval, 45);
-        return {
-          name, avg, count: amounts.length, category, cv,
-          lastDate: dates[dates.length - 1], interval, monthly, active,
-        };
-      })
-      // consistent bedrag én een plausibel herhaalpatroon (wekelijks t/m jaarlijks);
-      // frequenter dan ~6 dagen is los koopgedrag (boodschappen), geen vaste last
-      .filter(r => r.cv < 0.3 && r.interval >= 6 && r.interval <= 400);
-
-    const active = analyzed.filter(r => r.active).sort((a, b) => b.monthly - a.monthly);
-    const inactive = analyzed.filter(r => !r.active).sort((a, b) => b.monthly - a.monthly);
+    const items = getRecurringItems(txs, { minOccurrences: minOcc });
+    const active = items.filter(r => r.active).sort((a, b) => b.monthly - a.monthly);
+    const inactive = items.filter(r => !r.active).sort((a, b) => b.monthly - a.monthly);
     const totalMonthly = active.reduce((s, r) => s + r.monthly, 0);
 
-    const fmtLine = (r: typeof analyzed[number]) =>
-      `- **${r.name}** — ${fmt(r.avg)}/keer, ${intervalLabel(r.interval)} (~elke ${Math.round(r.interval)}d) — ~${fmt(r.monthly)}/mnd — ${r.count}x, ${r.category} — laatst: ${r.lastDate}`;
+    const fmtLine = (r: RecurringItem) => {
+      const nextNote = r.active ? ` — volgende verwacht: ${r.nextExpectedDate}` : '';
+      const priceNote = r.priceChange && r.priceChange.direction !== 'none'
+        ? ` — ${r.priceChange.direction === 'up' ? '⚠️ prijs gestegen' : 'prijs gedaald'} ${r.priceChange.pctChange > 0 ? '+' : ''}${r.priceChange.pctChange}%`
+        : '';
+      return `- **${r.displayName}** — ${fmt(r.avgAmount)}/keer, ${intervalLabel(r.interval)} (~elke ${Math.round(r.interval)}d) — ~${fmt(r.monthly)}/mnd — ${r.count}x, ${r.category} — laatst: ${r.lastDate}${nextNote}${priceNote}`;
+    };
 
     const lines = [
       `## Actieve terugkerende uitgaven (≥${minOcc}x, consistent bedrag)`,
@@ -922,6 +889,286 @@ server.tool(
         text: `Classificatie van **${target.name}** opgeslagen (${parts.join(' — ')}). De Duurzaam-pagina en vault_sustainability gebruiken dit direct.`,
       }],
     };
+  },
+);
+
+// ── Scenario/projectie helpers ───────────────────────────────────────────────
+
+// Input-vorm voor scenario-gebeurtenissen, gedeeld door vault_projection,
+// vault_cashflow_forecast en vault_scenario_upsert.
+const scenarioEventInput = z.object({
+  label: z.string().describe('Omschrijving, bijv. "Camper aankoop" of "Verbouwing keuken"'),
+  kind: z.enum(['oneOff', 'recurring']).describe("'oneOff' = eenmalig bedrag, 'recurring' = elke maand terugkerend"),
+  amount: z.number().describe('Bedrag (recurring: per maand). Negatief = uitgave, positief = inkomsten/extra inleg'),
+  startMonth: z.string().regex(/^\d{4}-\d{2}$/).describe("Startmaand, formaat 'YYYY-MM'"),
+  endMonth: z.string().regex(/^\d{4}-\d{2}$/).optional().describe("Eindmaand 'YYYY-MM' (inclusief) — alleen relevant voor recurring"),
+  note: z.string().optional(),
+});
+
+// Zet ad-hoc event-input om naar ScenarioEvent[] met wegwerp-ids (niet opgeslagen,
+// alleen gebruikt binnen één projectie/forecast-berekening).
+function toScenarioEvents(inputs: z.infer<typeof scenarioEventInput>[] | undefined): ScenarioEvent[] {
+  return (inputs ?? []).map((e, i) => ({ id: `adhoc-${i}`, ...e }));
+}
+
+function formatEvent(e: ScenarioEvent): string {
+  return `- **${e.label}**: ${fmt(e.amount)}${e.kind === 'recurring' ? '/mnd' : ''} vanaf ${e.startMonth}${e.endMonth ? ` t/m ${e.endMonth}` : ''}${e.note ? ` — ${e.note}` : ''}`;
+}
+
+// ── Tool: vault_projection ───────────────────────────────────────────────────
+
+server.tool(
+  'vault_projection',
+  'Langetermijn vermogensprojectie (Monte Carlo) met percentielbanden. Gebruik dit om what-if scenario\'s door te rekenen zoals een camper kopen, een verbouwing, of meer maandelijkse inleg in duurzame fondsen — via ad-hoc "events" of via al opgeslagen scenario\'s (scenarioIds).',
+  {
+    years: z.number().int().min(1).max(60).optional().describe('Projectiehorizon in jaren (default: 20)'),
+    monthlyContribution: z.number().optional().describe('Maandelijkse inleg (default: mediaan netto spaarsaldo laatste 12 maanden)'),
+    annualReturn: z.number().optional().describe('Verwacht bruto jaarlijks rendement in % (default: 7)'),
+    annualVolatility: z.number().optional().describe('Jaarlijkse volatiliteit in % (default: 15)'),
+    inflationRate: z.number().optional().describe('Inflatie in % per jaar (default: 2)'),
+    adjustForInflation: z.boolean().optional().describe('Corrigeer uitkomst voor inflatie, bedragen in huidige koopkracht (default: true)'),
+    goalAmount: z.number().optional().describe('Doelbedrag om slaagkans en "bereikt-in-jaar" te berekenen, bijv. een FIRE-nummer'),
+    includeProperty: z.boolean().optional().describe('Neem woning/hypotheek mee (default: aan als er een woning geregistreerd is)'),
+    events: z.array(scenarioEventInput).optional().describe('Ad-hoc gebeurtenissen om te verkennen zonder ze op te slaan'),
+    scenarioIds: z.array(z.string()).optional().describe('IDs van opgeslagen scenario\'s (via vault_scenario_list) om mee te nemen'),
+    simulations: z.number().int().min(50).max(2000).optional().describe('Aantal Monte Carlo simulaties (default: 500)'),
+    workspace: workspaceParam,
+  },
+  async ({
+    years, monthlyContribution, annualReturn, annualVolatility, inflationRate,
+    adjustForInflation, goalAmount, includeProperty, events, scenarioIds, simulations, workspace,
+  }) => {
+    const [txs, accounts, properties, scenarios] = await Promise.all([
+      api<Transaction[]>('/transactions', workspace),
+      api<Account[]>('/accounts', workspace),
+      api<LibProperty[]>('/properties', workspace),
+      api<Scenario[]>('/scenarios', workspace),
+    ]);
+
+    const startCapital = accounts.reduce((s, a) => s + getAccountBalance(a, txs), 0);
+    const contribution = monthlyContribution ?? getRobustMonthlyNetSavings(txs, 12);
+    const yearsHorizon = years ?? 20;
+
+    const hasProperty = properties.length > 0;
+    const useProperty = (includeProperty ?? hasProperty) && hasProperty;
+    let property: PropertyProjection | undefined;
+    if (useProperty) {
+      const totals = getTotalPropertyEquity(properties);
+      let totalBalance = 0, weightedRate = 0, maxMonths = 0, weightedGrowth = 0, totalValue = 0;
+      for (const p of properties) {
+        totalValue += p.currentValue;
+        weightedGrowth += p.currentValue * p.annualGrowth;
+        if (p.mortgage) {
+          totalBalance += p.mortgage.balance;
+          weightedRate += p.mortgage.balance * p.mortgage.interestRate;
+          maxMonths = Math.max(maxMonths, p.mortgage.monthsRemaining);
+        }
+      }
+      property = {
+        startValue: totals.value,
+        startDebt: totals.debt,
+        annualGrowth: totalValue > 0 ? weightedGrowth / totalValue : 0.03,
+        monthlyPayment: getMonthlyPayment(totalBalance, totalBalance > 0 ? weightedRate / totalBalance : 0, maxMonths),
+        interestRate: totalBalance > 0 ? weightedRate / totalBalance : 0,
+        monthsRemaining: maxMonths,
+      };
+    }
+
+    const savedEvents = scenarioIds?.length
+      ? scenarios.filter(s => scenarioIds.includes(s.id)).flatMap(s => s.events)
+      : [];
+    const allEvents = [...savedEvents, ...toScenarioEvents(events)];
+
+    const params: ProjectionParams = {
+      startCapital,
+      monthlyContribution: contribution,
+      annualReturn: (annualReturn ?? 7) / 100,
+      annualVolatility: (annualVolatility ?? 15) / 100,
+      inflationRate: (inflationRate ?? 2) / 100,
+      years: yearsHorizon,
+      simulations: simulations ?? 500,
+      goalAmount: goalAmount ?? Number.POSITIVE_INFINITY,
+      adjustForInflation: adjustForInflation ?? true,
+      property,
+      events: allEvents.length > 0 ? allEvents : undefined,
+    };
+
+    const result = runProjection(params);
+
+    const lines = [
+      '## Vermogensprojectie (Monte Carlo)',
+      '',
+      `Startkapitaal (cash): ${fmt(startCapital)}`,
+      `Maandelijkse inleg: ${fmt(contribution)}${monthlyContribution === undefined ? ' _(mediaan laatste 12 maanden)_' : ''}`,
+      `Aannames: ${annualReturn ?? 7}% rendement, ${annualVolatility ?? 15}% volatiliteit, ${inflationRate ?? 2}% inflatie, horizon ${yearsHorizon} jaar${(adjustForInflation ?? true) ? ' (bedragen in huidige koopkracht)' : ' (nominale bedragen)'}`,
+    ];
+    if (property) lines.push(`Woning meegenomen: waarde ${fmt(property.startValue)}, hypotheek ${fmt(property.startDebt)}`);
+    if (allEvents.length > 0) {
+      lines.push('', '### Meegenomen scenario-gebeurtenissen', ...allEvents.map(formatEvent));
+    }
+
+    const milestoneYears = Array.from(new Set([5, 10, yearsHorizon].filter(y => y >= 1 && y <= yearsHorizon))).sort((a, b) => a - b);
+    lines.push('', '### Resultaat');
+    for (const y of milestoneYears) {
+      const point = result.yearlyData[y];
+      if (!point) continue;
+      lines.push(`- **Jaar ${y}** (${point.label}): mediaan ${fmt(point.p50)} (P10 ${fmt(point.p10)} – P90 ${fmt(point.p90)})`);
+    }
+    lines.push(
+      '',
+      `**Eindresultaat na ${yearsHorizon} jaar**: mediaan ${fmt(result.medianFinal)}, bandbreedte P10–P90: ${fmt(result.p10Final)} – ${fmt(result.p90Final)}`,
+    );
+    if (goalAmount !== undefined) {
+      lines.push(`Kans om doel van ${fmt(goalAmount)} te halen: **${result.probabilityAboveGoal}%**`);
+      lines.push(result.fireYear
+        ? `Mediaan bereikt dit doel in jaar ${result.fireYear} (${result.yearlyData[result.fireYear].label})`
+        : 'Mediaan bereikt dit doel niet binnen de horizon.');
+    }
+    lines.push('', '_Indicatief, geen garantie. Monte Carlo-simulatie op basis van de opgegeven aannames — geen beleggingsadvies._');
+
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  },
+);
+
+// ── Tool: vault_cashflow_forecast ────────────────────────────────────────────
+
+server.tool(
+  'vault_cashflow_forecast',
+  'Korte/middellange termijn liquiditeitsprognose (standaard 24 maanden): loopt het kassaldo onder nul bij een geplande uitgave zoals een camper of verbouwing? Gebruik dit vóór vault_projection om de korte termijn haalbaarheid te checken.',
+  {
+    months: z.number().int().min(1).max(120).optional().describe('Aantal maanden vooruit (default: 24)'),
+    events: z.array(scenarioEventInput).optional().describe('Ad-hoc gebeurtenissen om te verkennen zonder ze op te slaan'),
+    scenarioIds: z.array(z.string()).optional().describe('IDs van opgeslagen scenario\'s (via vault_scenario_list) om mee te nemen'),
+    workspace: workspaceParam,
+  },
+  async ({ months, events, scenarioIds, workspace }) => {
+    const [txs, accounts, scenarios] = await Promise.all([
+      api<Transaction[]>('/transactions', workspace),
+      api<LibAccount[]>('/accounts', workspace),
+      api<Scenario[]>('/scenarios', workspace),
+    ]);
+
+    const savedEvents = scenarioIds?.length
+      ? scenarios.filter(s => scenarioIds.includes(s.id)).flatMap(s => s.events)
+      : [];
+    const allEvents = [...savedEvents, ...toScenarioEvents(events)];
+
+    const n = months ?? 24;
+    const forecast = forecastCashflow(txs, accounts, allEvents, n);
+    const lowest = forecast.months.reduce((min, m) => (m.projectedBalance < min.projectedBalance ? m : min), forecast.months[0]);
+
+    const lines = [
+      '## Liquiditeitsprognose',
+      '',
+      `Startsaldo: ${fmt(forecast.startBalance)}`,
+      `Gemiddelde maandelijkse netto kasstroom (historie): ${fmt(forecast.baselineNet)}`,
+    ];
+    if (allEvents.length > 0) {
+      lines.push('', '### Meegenomen scenario-gebeurtenissen', ...allEvents.map(formatEvent));
+    }
+    lines.push(
+      '',
+      `Laagste verwachte saldo in de komende ${n} maanden: **${fmt(forecast.minBalance)}**${lowest ? ` (${lowest.label})` : ''}`,
+    );
+    if (forecast.minBalance < 0) lines.push('⚠️ Saldo gaat naar verwachting onder nul.');
+    lines.push(
+      `Totale impact van scenario-gebeurtenissen over de hele periode: ${fmt(forecast.totalEventImpact)}`,
+      '',
+      '### Per kwartaal',
+      '| Kwartaal | Saldo (basis) | Saldo (met scenario) |',
+      '|---|---|---|',
+    );
+    for (let i = 0; i < forecast.months.length; i += 3) {
+      const m = forecast.months[i];
+      lines.push(`| ${m.label} | ${fmt(m.baselineBalance)} | ${fmt(m.projectedBalance)} |`);
+    }
+    lines.push('', '_Deterministische prognose (geen kansverdeling), gebaseerd op de mediane netto besparingen van de laatste 12 maanden._');
+
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  },
+);
+
+// ── Tool: vault_scenario_list ────────────────────────────────────────────────
+
+server.tool(
+  'vault_scenario_list',
+  'Toon opgeslagen scenario\'s (bijv. camper aankoop, verbouwing, extra duurzame inleg) met hun gebeurtenissen — dezelfde scenario\'s als op de Projecties-pagina',
+  {
+    workspace: workspaceParam,
+  },
+  async ({ workspace }) => {
+    const scenarios = await api<Scenario[]>('/scenarios', workspace);
+    if (scenarios.length === 0) {
+      return { content: [{ type: 'text', text: 'Nog geen scenario\'s opgeslagen. Gebruik vault_scenario_upsert om er een vast te leggen.' }] };
+    }
+    const lines = ['## Opgeslagen scenario\'s', ''];
+    for (const s of scenarios) {
+      lines.push(`### ${s.label} _(id: \`${s.id}\`)_`);
+      if (s.description) lines.push(s.description);
+      lines.push(...s.events.map(formatEvent), '');
+    }
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  },
+);
+
+// ── Tool: vault_scenario_upsert ──────────────────────────────────────────────
+
+server.tool(
+  'vault_scenario_upsert',
+  'Maak of werk een scenario bij (bijv. "Camper 2027", "Verbouwing keuken", "Extra duurzame inleg") — leg hiermee een what-if vast dat je met vault_projection of vault_cashflow_forecast hebt doorgerekend, zodat het ook op de Projecties-pagina verschijnt',
+  {
+    id: z.string().optional().describe('Bestaand scenario-id om bij te werken (via vault_scenario_list); leeg = nieuw scenario'),
+    label: z.string().describe('Naam van het scenario, bijv. "Camper 2027"'),
+    description: z.string().optional(),
+    events: z.array(scenarioEventInput).min(1).describe('Gebeurtenissen binnen dit scenario'),
+    workspace: workspaceParam,
+  },
+  async ({ id, label, description, events, workspace }) => {
+    const scenarios = await api<Scenario[]>('/scenarios', workspace);
+    const scenarioId = id || `scenario-${Date.now()}`;
+    const existing = scenarios.find(s => s.id === scenarioId);
+    const scenarioEvents: ScenarioEvent[] = events.map((e, i) => ({ id: `${scenarioId}-e${i}`, ...e }));
+
+    const next: Scenario = {
+      id: scenarioId,
+      label,
+      description,
+      events: scenarioEvents,
+      color: existing?.color,
+      createdAt: existing?.createdAt ?? new Date().toISOString(),
+    };
+    const updated = existing
+      ? scenarios.map(s => (s.id === scenarioId ? next : s))
+      : [...scenarios, next];
+    await apiSend<Scenario[]>('POST', '/scenarios', updated, workspace);
+
+    return {
+      content: [{
+        type: 'text',
+        text: `Scenario **${label}** opgeslagen (id: \`${scenarioId}\`, ${scenarioEvents.length} gebeurtenis${scenarioEvents.length === 1 ? '' : 'sen'}). Zichtbaar op de Projecties-pagina (tab Scenario's) en te gebruiken in vault_projection/vault_cashflow_forecast via scenarioIds.`,
+      }],
+    };
+  },
+);
+
+// ── Tool: vault_scenario_delete ──────────────────────────────────────────────
+
+server.tool(
+  'vault_scenario_delete',
+  'Verwijder een opgeslagen scenario',
+  {
+    id: z.string().describe('Scenario-id (via vault_scenario_list)'),
+    workspace: workspaceParam,
+  },
+  async ({ id, workspace }) => {
+    const scenarios = await api<Scenario[]>('/scenarios', workspace);
+    const target = scenarios.find(s => s.id === id);
+    if (!target) {
+      return { content: [{ type: 'text', text: `Geen scenario gevonden met id "${id}". Gebruik vault_scenario_list.` }] };
+    }
+    const remaining = scenarios.filter(s => s.id !== id);
+    await apiSend<Scenario[]>('POST', '/scenarios', remaining, workspace);
+    return { content: [{ type: 'text', text: `Scenario **${target.label}** verwijderd.` }] };
   },
 );
 

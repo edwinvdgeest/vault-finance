@@ -26,13 +26,13 @@ import {
   getLastMonthEnd,
   filterByPeriod,
   getPeriodSummaryWithDelta,
-  getRecurringExpenses,
   getCategoryTrend,
   getLabelSpending,
   getBudgetProgress,
   getTopMerchants,
   getCashflowSankey,
 } from '../lib/analytics';
+import { getRecurringItems } from '../lib/recurring';
 import { formatCurrency, getPeriodDates } from '../lib/utils';
 import { getTotalPropertyEquity } from '../lib/property';
 import MiniSparkline from '../components/MiniSparkline';
@@ -146,7 +146,7 @@ export default function Dashboard() {
   const accountData = getAccountBreakdown(accounts, transactions);
   const top5 = getTopExpenses(periodTxs);
   const periodSummary = getPeriodSummaryWithDelta(transactions, start, end);
-  const recurring = getRecurringExpenses(transactions);
+  const recurring = getRecurringItems(transactions).filter(r => r.active);
   const categoryTrends = getCategoryTrend(transactions);
   const labelSpending = getLabelSpending(periodTxs);
   const budgets = storage.getBudgets();
@@ -839,13 +839,13 @@ export default function Dashboard() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
               <SectionTitle>Vaste lasten</SectionTitle>
               <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#ef4444' }}>
-                {formatCurrency(recurring.reduce((s, r) => s + r.avgAmount, 0))}/mnd
+                {formatCurrency(recurring.reduce((s, r) => s + r.monthly, 0))}/mnd
               </span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
-              {recurring.slice(0, 10).map(r => (
+              {recurring.slice(0, 5).map(r => (
                 <div
-                  key={r.name}
+                  key={r.key}
                   style={{
                     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                     padding: '0.4rem 0.625rem',
@@ -854,15 +854,24 @@ export default function Dashboard() {
                   }}
                 >
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: '0.8rem', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</div>
+                    <div style={{ fontSize: '0.8rem', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.displayName}</div>
                     <div style={{ fontSize: '0.68rem', color: '#64748b' }}>{r.category}</div>
                   </div>
                   <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#ef4444', whiteSpace: 'nowrap' }}>
-                    {formatCurrency(r.avgAmount)}/mnd
+                    {formatCurrency(r.monthly)}/mnd
                   </span>
                 </div>
               ))}
             </div>
+            <button
+              onClick={() => navigate('/vaste-lasten')}
+              style={{
+                marginTop: '0.625rem', background: 'none', border: 'none', color: '#8b5cf6',
+                fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', padding: 0, fontFamily: 'inherit',
+              }}
+            >
+              Bekijk alles →
+            </button>
           </GlassCard>
         )}
 

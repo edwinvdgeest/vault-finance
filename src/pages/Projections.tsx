@@ -97,7 +97,10 @@ export default function Projections() {
 
   // Scenarios (what-if events)
   const [scenariosState, setScenariosState] = useState<Scenario[]>(() => storage.getScenarios());
-  const initialSettings = storage.getSettings() as { activeScenarioId?: string | null; compareScenarioIds?: string[]; cashflowBaselineOverride?: number | null };
+  const initialSettings = storage.getSettings() as {
+    activeScenarioId?: string | null; compareScenarioIds?: string[]; cashflowBaselineOverride?: number | null;
+    lifePhases?: LifePhase[];
+  };
   const [activeScenarioId, setActiveScenarioId] = useState<string | null>(initialSettings.activeScenarioId ?? null);
   const [compareScenarioIds, setCompareScenarioIds] = useState<string[]>(initialSettings.compareScenarioIds ?? []);
   const [compareMode, setCompareMode] = useState(false);
@@ -143,9 +146,14 @@ export default function Projections() {
   const [goalAmount, setGoalAmount] = useState(1000000);
   const [adjustInflation, setAdjustInflation] = useState(false);
 
-  // Life phases
-  const [phases, setPhases] = useState<LifePhase[]>([]);
+  // Life phases (persisted via settings, zodat MCP en de UI dezelfde fases delen)
+  const [phases, setPhasesState] = useState<LifePhase[]>(initialSettings.lifePhases ?? []);
   const [showPhases, setShowPhases] = useState(false);
+
+  function setPhases(next: LifePhase[]) {
+    setPhasesState(next);
+    storage.updateSettings({ lifePhases: next });
+  }
 
   // FIRE
   const [monthlyExpenses, setMonthlyExpenses] = useState(3000);

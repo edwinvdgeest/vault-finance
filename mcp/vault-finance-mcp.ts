@@ -17,7 +17,7 @@ import {
 } from '../src/lib/sustainability';
 import type { SustainTheme, SustainLevel } from '../src/lib/sustainability';
 import { runProjection } from '../src/lib/projections';
-import type { ProjectionParams, PropertyProjection } from '../src/lib/projections';
+import type { ProjectionParams, PropertyProjection, LifePhase } from '../src/lib/projections';
 import { forecastCashflow } from '../src/lib/cashflow';
 import { getRobustMonthlyNetSavings } from '../src/lib/analytics';
 import { getTotalPropertyEquity, getMonthlyPayment } from '../src/lib/property';
@@ -920,6 +920,24 @@ function formatEvent(e: ScenarioEvent): string {
   return `- **${e.label}**: ${fmt(e.amount)}${e.kind === 'recurring' ? '/mnd' : ''} vanaf ${e.startMonth}${e.endMonth ? ` t/m ${e.endMonth}` : ''}${e.note ? ` — ${e.note}` : ''}`;
 }
 
+// Input-vorm voor levensfases (stapsgewijze wijziging van de maandelijkse inleg
+// over tijd), gedeeld door vault_projection en vault_life_phases_set. Opgeslagen
+// in settings.json onder `lifePhases` — dezelfde plek als de Projecties-pagina.
+const lifePhaseInput = z.object({
+  label: z.string().describe('Naam van de fase, bijv. "Na de camper" of "Minder inkomen"'),
+  fromYear: z.number().int().min(0).describe('Vanaf welk jaar (0 = nu) deze fase ingaat'),
+  monthlyContribution: z.number().describe('Maandelijkse inleg tijdens deze fase (vervangt de standaardinleg vanaf dit jaar)'),
+});
+
+function formatPhase(p: LifePhase): string {
+  return `- **${p.label}**: vanaf jaar ${p.fromYear} → ${fmt(p.monthlyContribution)}/maand`;
+}
+
+async function getStoredPhases(workspace?: string): Promise<LifePhase[]> {
+  const settings = await api<Record<string, unknown>>('/settings', workspace);
+  return ((settings.lifePhases as LifePhase[] | undefined) ?? []).slice().sort((a, b) => a.fromYear - b.fromYear);
+}
+
 // ── Tool: vault_projection ───────────────────────────────────────────────────
 
 server.tool(
@@ -936,18 +954,21 @@ server.tool(
     includeProperty: z.boolean().optional().describe('Neem woning/hypotheek mee (default: aan als er een woning geregistreerd is)'),
     events: z.array(scenarioEventInput).optional().describe('Ad-hoc gebeurtenissen om te verkennen zonder ze op te slaan'),
     scenarioIds: z.array(z.string()).optional().describe('IDs van opgeslagen scenario\'s (via vault_scenario_list) om mee te nemen'),
+    usePhases: z.boolean().optional().describe('Neem opgeslagen levensfases mee (default: aan als er fases zijn vastgelegd via vault_life_phases_set)'),
+    phases: z.array(lifePhaseInput).optional().describe('Ad-hoc levensfases om te verkennen zonder ze op te slaan (overschrijft voor deze berekening de opgeslagen fases)'),
     simulations: z.number().int().min(50).max(2000).optional().describe('Aantal Monte Carlo simulaties (default: 500)'),
     workspace: workspaceParam,
   },
   async ({
     years, monthlyContribution, annualReturn, annualVolatility, inflationRate,
-    adjustForInflation, goalAmount, includeProperty, events, scenarioIds, simulations, workspace,
+    adjustForInflation, goalAmount, includeProperty, events, scenarioIds, usePhases, phases, simulations, workspace,
   }) => {
-    const [txs, accounts, properties, scenarios] = await Promise.all([
+    const [txs, accounts, properties, scenarios, storedPhases] = await Promise.all([
       api<Transaction[]>('/transactions', workspace),
       api<Account[]>('/accounts', workspace),
       api<LibProperty[]>('/properties', workspace),
       api<Scenario[]>('/scenarios', workspace),
+      getStoredPhases(workspace),
     ]);
 
     const startCapital = accounts.reduce((s, a) => s + getAccountBalance(a, txs), 0);
@@ -984,6 +1005,11 @@ server.tool(
       : [];
     const allEvents = [...savedEvents, ...toScenarioEvents(events)];
 
+    const adhocPhases = phases?.length
+      ? phases.map((p, i) => ({ id: `adhoc-phase-${i}`, ...p }))
+      : undefined;
+    const effectivePhases = adhocPhases ?? ((usePhases ?? storedPhases.length > 0) ? storedPhases : undefined);
+
     const params: ProjectionParams = {
       startCapital,
       monthlyContribution: contribution,
@@ -995,6 +1021,7 @@ server.tool(
       goalAmount: goalAmount ?? Number.POSITIVE_INFINITY,
       adjustForInflation: adjustForInflation ?? true,
       property,
+      phases: effectivePhases && effectivePhases.length > 0 ? effectivePhases : undefined,
       events: allEvents.length > 0 ? allEvents : undefined,
     };
 
@@ -1008,6 +1035,9 @@ server.tool(
       `Aannames: ${annualReturn ?? 7}% rendement, ${annualVolatility ?? 15}% volatiliteit, ${inflationRate ?? 2}% inflatie, horizon ${yearsHorizon} jaar${(adjustForInflation ?? true) ? ' (bedragen in huidige koopkracht)' : ' (nominale bedragen)'}`,
     ];
     if (property) lines.push(`Woning meegenomen: waarde ${fmt(property.startValue)}, hypotheek ${fmt(property.startDebt)}`);
+    if (params.phases && params.phases.length > 0) {
+      lines.push('', '### Meegenomen levensfases (inlegschema)', ...params.phases.map(formatPhase));
+    }
     if (allEvents.length > 0) {
       lines.push('', '### Meegenomen scenario-gebeurtenissen', ...allEvents.map(formatEvent));
     }
@@ -1174,6 +1204,58 @@ server.tool(
     const remaining = scenarios.filter(s => s.id !== id);
     await apiSend<Scenario[]>('POST', '/scenarios', remaining, workspace);
     return { content: [{ type: 'text', text: `Scenario **${target.label}** verwijderd.` }] };
+  },
+);
+
+// ── Tool: vault_life_phases_list ─────────────────────────────────────────────
+
+server.tool(
+  'vault_life_phases_list',
+  'Toon het opgeslagen inlegschema (levensfases): stapsgewijze wijzigingen van de maandelijkse inleg over tijd, bijv. "minder inleg vanaf de camper-aankoop, weer normaal na 3 jaar" — zoals gebruikt in de Projecties-pagina',
+  {
+    workspace: workspaceParam,
+  },
+  async ({ workspace }) => {
+    const phases = await getStoredPhases(workspace);
+    if (phases.length === 0) {
+      return {
+        content: [{
+          type: 'text',
+          text: 'Nog geen levensfases vastgelegd — de projectie gebruikt een vaste maandelijkse inleg. Gebruik vault_life_phases_set om de inleg over tijd te laten variëren.',
+        }],
+      };
+    }
+    return { content: [{ type: 'text', text: ['## Levensfases (inlegschema)', '', ...phases.map(formatPhase)].join('\n') }] };
+  },
+);
+
+// ── Tool: vault_life_phases_set ──────────────────────────────────────────────
+
+server.tool(
+  'vault_life_phases_set',
+  'Leg het volledige inlegschema over tijd vast (levensfases), bijv. "vanaf jaar 3 €200 minder inleg door de camper-aankoop, vanaf jaar 6 weer terug naar normaal". Vervangt de volledige lijst — gebruik vault_life_phases_list om de huidige stand te zien. Een lege lijst verwijdert alle fases weer.',
+  {
+    phases: z.array(lifePhaseInput).describe('Volledige, nieuwe lijst van levensfases (vervangt de bestaande lijst)'),
+    workspace: workspaceParam,
+  },
+  async ({ phases, workspace }) => {
+    const settings = await api<Record<string, unknown>>('/settings', workspace);
+    const stored: LifePhase[] = phases
+      .map((p, i) => ({ id: `phase-${i}`, ...p }))
+      .sort((a, b) => a.fromYear - b.fromYear);
+    await apiSend<Record<string, unknown>>('POST', '/settings', { ...settings, lifePhases: stored }, workspace);
+
+    if (stored.length === 0) {
+      return { content: [{ type: 'text', text: 'Alle levensfases verwijderd — de projectie gebruikt weer een vaste maandelijkse inleg.' }] };
+    }
+    const lines = [
+      'Levensfases opgeslagen:',
+      '',
+      ...stored.map(formatPhase),
+      '',
+      'Zichtbaar op de Projecties-pagina en automatisch meegenomen in vault_projection (tenzij usePhases: false).',
+    ];
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
   },
 );
 

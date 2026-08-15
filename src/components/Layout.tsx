@@ -1,4 +1,5 @@
-import { NavLink } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
 import WorkspaceSwitcher from './WorkspaceSwitcher';
 
 function IconGrid() {
@@ -87,19 +88,146 @@ function IconSettings() {
   );
 }
 
-const NAV = [
+function IconChevronDown() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
+}
+
+function IconMore() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="5" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="19" cy="12" r="1.5" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+type NavItem = { to: string; label: string; shortLabel: string; exact?: boolean; Icon: () => JSX.Element };
+type NavGroup = { group: string; items: NavItem[] };
+type NavEntry = NavItem | NavGroup;
+
+function isGroup(entry: NavEntry): entry is NavGroup {
+  return 'group' in entry;
+}
+
+const NAV: NavEntry[] = [
   { to: '/', label: 'Dashboard', shortLabel: 'Dashboard', exact: true, Icon: IconGrid },
-  { to: '/transactions', label: 'Transacties', shortLabel: 'Transacties', Icon: IconList },
-  { to: '/vaste-lasten', label: 'Vaste lasten', shortLabel: 'Vast', Icon: IconRepeat },
-  { to: '/calendar', label: 'Kalender', shortLabel: 'Kalender', Icon: IconCalendar },
-  { to: '/projections', label: 'Projecties', shortLabel: 'Projecties', Icon: IconTrendUp },
-  { to: '/taxes', label: 'Belasting', shortLabel: 'Belasting', Icon: IconReceipt },
-  { to: '/sustainability', label: 'Duurzaam', shortLabel: 'Duurzaam', Icon: IconLeaf },
-  { to: '/import', label: 'Import', shortLabel: 'Import', Icon: IconUpload },
-  { to: '/settings', label: 'Instellingen', shortLabel: 'Stel in', Icon: IconSettings },
+  {
+    group: 'Geld',
+    items: [
+      { to: '/transactions', label: 'Transacties', shortLabel: 'Transacties', Icon: IconList },
+      { to: '/vaste-lasten', label: 'Vaste lasten', shortLabel: 'Vast', Icon: IconRepeat },
+      { to: '/calendar', label: 'Kalender', shortLabel: 'Kalender', Icon: IconCalendar },
+    ],
+  },
+  {
+    group: 'Planning',
+    items: [
+      { to: '/projections', label: 'Projecties', shortLabel: 'Projecties', Icon: IconTrendUp },
+      { to: '/taxes', label: 'Belasting', shortLabel: 'Belasting', Icon: IconReceipt },
+      { to: '/sustainability', label: 'Duurzaam', shortLabel: 'Duurzaam', Icon: IconLeaf },
+    ],
+  },
+  {
+    group: 'Beheer',
+    items: [
+      { to: '/import', label: 'Import', shortLabel: 'Import', Icon: IconUpload },
+      { to: '/settings', label: 'Instellingen', shortLabel: 'Stel in', Icon: IconSettings },
+    ],
+  },
 ];
 
+// Routes with their own bottom-nav tab; every other route lives behind "Meer" on mobile.
+const MOBILE_PRIMARY = ['/', '/transactions', '/projections'];
+
+function isPathActive(pathname: string, to: string, exact?: boolean) {
+  if (exact) return pathname === to;
+  return pathname === to || pathname.startsWith(`${to}/`);
+}
+
+function NavGroupDropdown({ group }: { group: NavGroup }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const location = useLocation();
+  const active = group.items.some(item => isPathActive(location.pathname, item.to));
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    setOpen(false);
+  }, [location.pathname]);
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className={`nav-link nav-group-trigger${active ? ' active' : ''}`}
+        aria-haspopup="true"
+        aria-expanded={open}
+      >
+        {group.group}
+        <span style={{ display: 'inline-flex', transform: open ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s' }}>
+          <IconChevronDown />
+        </span>
+      </button>
+      {open && (
+        <div className="nav-group-menu" role="menu">
+          {group.items.map(({ to, label, Icon }) => (
+            <NavLink
+              key={to}
+              to={to}
+              role="menuitem"
+              className={({ isActive }) => `nav-group-menu-item${isActive ? ' active' : ''}`}
+            >
+              <Icon />
+              <span>{label}</span>
+            </NavLink>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Layout({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  useEffect(() => {
+    setMoreOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!moreOpen) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setMoreOpen(false);
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [moreOpen]);
+
+  const groups = NAV.filter(isGroup);
+  const moreActive = groups.some(g => g.items.some(item => isPathActive(location.pathname, item.to)));
+
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       {/* Top header */}
@@ -146,17 +274,21 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
 
           {/* Nav links — hidden on mobile via CSS */}
-          <nav className="top-nav-links" style={{ display: 'flex', gap: '0.25rem' }}>
-            {NAV.map(({ to, label, exact }) => (
-              <NavLink
-                key={to}
-                to={to}
-                end={exact}
-                className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
-              >
-                {label}
-              </NavLink>
-            ))}
+          <nav className="top-nav-links" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+            {NAV.map(entry =>
+              isGroup(entry) ? (
+                <NavGroupDropdown key={entry.group} group={entry} />
+              ) : (
+                <NavLink
+                  key={entry.to}
+                  to={entry.to}
+                  end={entry.exact}
+                  className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
+                >
+                  {entry.label}
+                </NavLink>
+              )
+            )}
           </nav>
 
           {/* Workspace switcher — pushed to the right */}
@@ -174,19 +306,58 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       {/* Bottom nav — mobile only, shown via CSS */}
       <nav className="bottom-nav" aria-label="Navigatie">
         <div className="bottom-nav-inner">
-          {NAV.map(({ to, shortLabel, exact, Icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={exact}
-              className={({ isActive }) => `bottom-nav-item${isActive ? ' active' : ''}`}
-            >
-              <Icon />
-              <span>{shortLabel}</span>
-            </NavLink>
-          ))}
+          <NavLink to="/" end className={({ isActive }) => `bottom-nav-item${isActive ? ' active' : ''}`}>
+            <IconGrid />
+            <span>Dashboard</span>
+          </NavLink>
+          <NavLink to="/transactions" className={({ isActive }) => `bottom-nav-item${isActive ? ' active' : ''}`}>
+            <IconList />
+            <span>Transacties</span>
+          </NavLink>
+          <NavLink to="/projections" className={({ isActive }) => `bottom-nav-item${isActive ? ' active' : ''}`}>
+            <IconTrendUp />
+            <span>Projecties</span>
+          </NavLink>
+          <button
+            type="button"
+            className={`bottom-nav-item${moreActive ? ' active' : ''}`}
+            onClick={() => setMoreOpen(o => !o)}
+            aria-haspopup="true"
+            aria-expanded={moreOpen}
+          >
+            <IconMore />
+            <span>Meer</span>
+          </button>
         </div>
       </nav>
+
+      {/* "Meer" sheet — mobile only */}
+      {moreOpen && (
+        <div className="mobile-more-backdrop" onClick={() => setMoreOpen(false)}>
+          <div className="mobile-more-sheet" onClick={e => e.stopPropagation()}>
+            <div className="mobile-more-handle" />
+            {groups.map(group => {
+              const items = group.items.filter(item => !MOBILE_PRIMARY.includes(item.to));
+              if (items.length === 0) return null;
+              return (
+                <div key={group.group} className="mobile-more-group">
+                  <div className="mobile-more-group-title">{group.group}</div>
+                  {items.map(({ to, label, Icon }) => (
+                    <NavLink
+                      key={to}
+                      to={to}
+                      className={({ isActive }) => `mobile-more-item${isActive ? ' active' : ''}`}
+                    >
+                      <Icon />
+                      <span>{label}</span>
+                    </NavLink>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

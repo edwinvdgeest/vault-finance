@@ -443,13 +443,21 @@ export function getCashflowSankey(transactions: Transaction[]): SankeyData {
   const sortedIncome = [...incomeBySource.entries()].sort((a, b) => b[1] - a[1]);
   const topIncome = sortedIncome.slice(0, 6);
   const restIncome = sortedIncome.slice(6).reduce((sum, [, v]) => sum + v, 0);
-  if (restIncome > 0) topIncome.push(['Overig inkomen', restIncome]);
+  if (restIncome > 0) {
+    const existing = topIncome.find(([name]) => name === 'Overig inkomen');
+    if (existing) existing[1] += restIncome;
+    else topIncome.push(['Overig inkomen', restIncome]);
+  }
 
   // Consolidate small expense categories into "Overig"
   const sortedExpenses = [...expenseByCategory.entries()].sort((a, b) => b[1] - a[1]);
   const topExpenses = sortedExpenses.slice(0, 10);
   const restExpenses = sortedExpenses.slice(10).reduce((sum, [, v]) => sum + v, 0);
-  if (restExpenses > 0) topExpenses.push(['Overig', restExpenses]);
+  if (restExpenses > 0) {
+    const existing = topExpenses.find(([cat]) => cat === 'Overig');
+    if (existing) existing[1] += restExpenses;
+    else topExpenses.push(['Overig', restExpenses]);
+  }
 
   const totalIncome = topIncome.reduce((s, [, v]) => s + v, 0);
   const totalExpenses = topExpenses.reduce((s, [, v]) => s + v, 0);

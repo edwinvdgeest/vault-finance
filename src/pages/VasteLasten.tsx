@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { storage } from '../lib/storage';
 import { getFixedVsVariableSplit, intervalLabel, type RecurringItem } from '../lib/recurring';
 import { formatCurrency, formatDate } from '../lib/utils';
+import type { RecurringOverride } from '../types';
 
 function GlassCard({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
@@ -60,12 +61,25 @@ function PriceChangeBadge({ item }: { item: RecurringItem }) {
   );
 }
 
-function ItemRow({ item, onClick }: { item: RecurringItem; onClick: () => void }) {
+const actionBtnStyle: React.CSSProperties = {
+  fontSize: '0.68rem', fontWeight: 600, color: '#8b5cf6', background: 'none', border: 'none',
+  cursor: 'pointer', padding: '0.15rem 0.4rem', borderRadius: '0.3rem', whiteSpace: 'nowrap', fontFamily: 'inherit',
+};
+
+function ItemRow({
+  item, onClick, onDismiss, onToggleStopped, onRestore,
+}: {
+  item: RecurringItem;
+  onClick: () => void;
+  onDismiss?: () => void;
+  onToggleStopped?: () => void;
+  onRestore?: () => void;
+}) {
   return (
     <div
       onClick={onClick}
       style={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.6rem',
         padding: '0.5rem 0.75rem', cursor: 'pointer', transition: 'background 0.15s',
         background: 'rgba(255,255,255,0.03)', borderRadius: '0.5rem',
         border: '1px solid rgba(255,255,255,0.05)',
@@ -90,6 +104,27 @@ function ItemRow({ item, onClick }: { item: RecurringItem; onClick: () => void }
         <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#ef4444' }}>{formatCurrency(item.monthly)}</div>
         <div style={{ fontSize: '0.65rem', color: '#64748b' }}>{item.count}×</div>
       </div>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.1rem' }}>
+        {onRestore && (
+          <button onClick={e => { e.stopPropagation(); onRestore(); }} style={actionBtnStyle}>
+            Herstel
+          </button>
+        )}
+        {onToggleStopped && (
+          <button
+            onClick={e => { e.stopPropagation(); onToggleStopped(); }}
+            style={actionBtnStyle}
+            title={item.active ? 'Forceer status "gestopt", ongeacht de detectie' : 'Verwijder de handmatige "gestopt"-markering'}
+          >
+            {item.active ? 'Markeer gestopt' : 'Markeer actief'}
+          </button>
+        )}
+        {onDismiss && (
+          <button onClick={e => { e.stopPropagation(); onDismiss(); }} style={actionBtnStyle} title="Geen echte vaste last — overal verbergen">
+            Geen vaste last
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -97,13 +132,31 @@ function ItemRow({ item, onClick }: { item: RecurringItem; onClick: () => void }
 export default function VasteLasten() {
   const navigate = useNavigate();
   const [showStopped, setShowStopped] = useState(false);
+  const [showDismissed, setShowDismissed] = useState(false);
+  const [, forceUpdate] = useState(0);
 
   const transactions = storage.getTransactions();
-  const split = getFixedVsVariableSplit(transactions);
+  const overrides = storage.getRecurringOverrides();
+  const split = getFixedVsVariableSplit(transactions, overrides);
 
   const active = split.items.filter(r => r.active).sort((a, b) => b.monthly - a.monthly);
   const stopped = split.items.filter(r => !r.active).sort((a, b) => b.monthly - a.monthly);
+  const dismissed = split.dismissedItems.sort((a, b) => b.monthly - a.monthly);
   const priceChanges = active.filter(r => r.priceChange && r.priceChange.direction !== 'none' && r.count >= 3);
+
+  function setOverride(key: string, patch: Partial<RecurringOverride>) {
+    const existing = storage.getRecurringOverrides();
+    const idx = existing.findIndex(o => o.key === key);
+    const merged: RecurringOverride = { ...(idx >= 0 ? existing[idx] : { key }), ...patch };
+    const isDefault = !merged.dismissed && !merged.markedStopped;
+    const next = isDefault
+      ? existing.filter(o => o.key !== key)
+      : idx >= 0
+        ? existing.map(o => (o.key === key ? merged : o))
+        : [...existing, merged];
+    storage.setRecurringOverrides(next);
+    forceUpdate(n => n + 1);
+  }
 
   const goToMerchant = (item: RecurringItem) => {
     navigate(`/transactions?${new URLSearchParams({ search: item.displayName }).toString()}`);
@@ -160,7 +213,13 @@ export default function VasteLasten() {
         {active.length > 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
             {active.map(item => (
-              <ItemRow key={item.key} item={item} onClick={() => goToMerchant(item)} />
+              <ItemRow
+                key={item.key}
+                item={item}
+                onClick={() => goToMerchant(item)}
+                onDismiss={() => setOverride(item.key, { dismissed: true })}
+                onToggleStopped={() => setOverride(item.key, { markedStopped: true })}
+              />
             ))}
           </div>
         ) : (
@@ -173,7 +232,13 @@ export default function VasteLasten() {
           <SectionTitle>Prijswijzigingen</SectionTitle>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
             {priceChanges.map(item => (
-              <ItemRow key={item.key} item={item} onClick={() => goToMerchant(item)} />
+              <ItemRow
+                key={item.key}
+                item={item}
+                onClick={() => goToMerchant(item)}
+                onDismiss={() => setOverride(item.key, { dismissed: true })}
+                onToggleStopped={() => setOverride(item.key, { markedStopped: true })}
+              />
             ))}
           </div>
         </GlassCard>
@@ -206,7 +271,52 @@ export default function VasteLasten() {
           {showStopped && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '0.625rem' }}>
               {stopped.map(item => (
-                <ItemRow key={item.key} item={item} onClick={() => goToMerchant(item)} />
+                <ItemRow
+                  key={item.key}
+                  item={item}
+                  onClick={() => goToMerchant(item)}
+                  onDismiss={() => setOverride(item.key, { dismissed: true })}
+                  onToggleStopped={() => setOverride(item.key, { markedStopped: false })}
+                />
+              ))}
+            </div>
+          )}
+        </GlassCard>
+      )}
+
+      {dismissed.length > 0 && (
+        <GlassCard>
+          <button
+            onClick={() => setShowDismissed(s => !s)}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%',
+              padding: '0.5rem 0.875rem', background: 'rgba(148,163,184,0.08)', border: '1px solid rgba(148,163,184,0.2)',
+              borderRadius: '0.5rem', cursor: 'pointer', fontFamily: 'inherit',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span
+                style={{
+                  fontSize: '0.7rem', color: '#94a3b8', display: 'inline-block',
+                  transform: showDismissed ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s',
+                }}
+              >
+                ▶
+              </span>
+              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#e2e8f0' }}>
+                Genegeerd — geen vaste last ({dismissed.length})
+              </span>
+            </div>
+          </button>
+          {showDismissed && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '0.625rem' }}>
+              {dismissed.map(item => (
+                <ItemRow
+                  key={item.key}
+                  item={item}
+                  onClick={() => goToMerchant(item)}
+                  onRestore={() => setOverride(item.key, { dismissed: false })}
+                />
               ))}
             </div>
           )}

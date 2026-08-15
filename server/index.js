@@ -19,7 +19,7 @@ const WORKSPACES = (process.env.VAULT_WORKSPACES
   ? process.env.VAULT_WORKSPACES.split(',').map(s => s.trim())
   : WORKSPACE_DEFS.map(w => w.slug));
 
-const DATA_FILES = ['transactions.json', 'accounts.json', 'rules.json', 'assets.json', 'budgets.json', 'properties.json', 'scenarios.json', 'settings.json'];
+const DATA_FILES = ['transactions.json', 'accounts.json', 'rules.json', 'assets.json', 'budgets.json', 'properties.json', 'scenarios.json', 'settings.json', 'recurring-overrides.json'];
 
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 for (const ws of WORKSPACES) mkdirSync(join(DATA_DIR, ws), { recursive: true });
@@ -327,6 +327,13 @@ function makeHandlers(ws) {
       writeJSON(ws, 'scenarios.json', scenarios);
       res.json(scenarios);
     },
+    // Recurring overrides (handmatige correcties op vaste-lasten-detectie)
+    getRecurringOverrides: (_, res) => res.json(readJSON(ws, 'recurring-overrides.json')),
+    postRecurringOverrides: (req, res) => {
+      const overrides = req.body || [];
+      writeJSON(ws, 'recurring-overrides.json', overrides);
+      res.json(overrides);
+    },
   };
 }
 
@@ -357,6 +364,9 @@ function registerRoutes(app, prefix, h) {
 
   app.get(`${prefix}/scenarios`, h.getScenarios);
   app.post(`${prefix}/scenarios`, h.postScenarios);
+
+  app.get(`${prefix}/recurring-overrides`, h.getRecurringOverrides);
+  app.post(`${prefix}/recurring-overrides`, h.postRecurringOverrides);
 }
 
 // Workspace-scoped routes

@@ -1,6 +1,12 @@
-import type { Transaction } from '../types';
+import type { Transaction, RecurringOverride } from '../types';
 import { isTransfer } from './analytics';
 import { normalizeMerchant } from './merchant';
+
+// Categorieën die per definitie discretionaire/variabele uitgaven zijn, nooit
+// een vaste last — ook niet als een toevallige herhaalaankoop (bv. een
+// vakantie-restaurant dat je elk jaar bezoekt) statistisch op een vaste last
+// lijkt (consistent bedrag + regelmatig interval).
+const NEVER_FIXED_CATEGORIES = new Set(['Horeca', 'Vakantie & Reizen']);
 
 export interface RecurringItem {
   key: string;
@@ -98,12 +104,14 @@ export function getRecurringItems(transactions: Transaction[], opts: RecurringOp
     // frequenter dan ~6 dagen is los koopgedrag (boodschappen), geen vaste last
     if (!(cv < 0.3 && interval >= 6 && interval <= 400)) continue;
 
+    const category = sorted[sorted.length - 1].category;
+    if (NEVER_FIXED_CATEGORIES.has(category)) continue;
+
     const lastDate = sorted[sorted.length - 1].date;
     const daysSinceLast = (refTime - times[times.length - 1]) / 86400000;
     const active = daysSinceLast <= Math.max(2 * interval, 45);
     const monthly = interval > 0 ? avg * (30.44 / interval) : avg;
     const nextExpectedDate = addDays(lastDate, interval);
-    const category = sorted[sorted.length - 1].category;
 
     let priceChange: RecurringItem['priceChange'] = null;
     if (amounts.length >= 2) {
@@ -140,6 +148,33 @@ export function getRecurringItems(transactions: Transaction[], opts: RecurringOp
 }
 
 /**
+ * Past handmatige correcties (zie RecurringOverride) toe op een lijst
+ * RecurringItem's: genegeerde items verdwijnen uit active/stopped (maar
+ * blijven beschikbaar om te herstellen), en handmatig-gestopt geforceerde
+ * items verhuizen naar `stopped` ongeacht wat de detectie zelf berekende.
+ * Dit is de enige plek waar overrides worden toegepast, zodat de app-pagina,
+ * het Dashboard en de MCP-tool nooit uit elkaar kunnen lopen.
+ */
+export function applyRecurringOverrides(
+  items: RecurringItem[],
+  overrides: RecurringOverride[],
+): { active: RecurringItem[]; stopped: RecurringItem[]; dismissed: RecurringItem[] } {
+  const overrideMap = new Map(overrides.map(o => [o.key, o]));
+  const active: RecurringItem[] = [];
+  const stopped: RecurringItem[] = [];
+  const dismissed: RecurringItem[] = [];
+
+  for (const item of items) {
+    const ov = overrideMap.get(item.key);
+    if (ov?.dismissed) { dismissed.push(item); continue; }
+    const resolved = ov?.markedStopped ? { ...item, active: false } : item;
+    (resolved.active ? active : stopped).push(resolved);
+  }
+
+  return { active, stopped, dismissed };
+}
+
+/**
  * Vaste-vs-variabele-lasten-splitsing. "Vast" is per definitie de som van de
  * actieve items uit `getRecurringItems` (dezelfde cv/interval-classificatie),
  * zodat dit getal en de itemlijst nooit uit elkaar kunnen lopen. "Variabel" is
@@ -147,15 +182,21 @@ export function getRecurringItems(transactions: Transaction[], opts: RecurringOp
  * maanden, zelfde mediaan-over-maandbuckets-aanpak als getRobustMonthlyNetSavings
  * in analytics.ts) en de vaste lasten.
  */
-export function getFixedVsVariableSplit(transactions: Transaction[], opts: RecurringOptions = {}): {
+export function getFixedVsVariableSplit(
+  transactions: Transaction[],
+  overrides: RecurringOverride[] = [],
+  opts: RecurringOptions = {},
+): {
   fixedMonthly: number;
   variableMonthly: number;
   fixedPct: number;
   variablePct: number;
   items: RecurringItem[];
+  dismissedItems: RecurringItem[];
 } {
-  const items = getRecurringItems(transactions, opts);
-  const fixedMonthly = Math.round(items.filter(r => r.active).reduce((s, r) => s + r.monthly, 0) * 100) / 100;
+  const rawItems = getRecurringItems(transactions, opts);
+  const { active, stopped, dismissed } = applyRecurringOverrides(rawItems, overrides);
+  const fixedMonthly = Math.round(active.reduce((s, r) => s + r.monthly, 0) * 100) / 100;
 
   const months = 12;
   const now = new Date();
@@ -178,5 +219,5 @@ export function getFixedVsVariableSplit(transactions: Transaction[], opts: Recur
   const fixedPct = denom > 0 ? Math.round((fixedMonthly / denom) * 1000) / 10 : 0;
   const variablePct = denom > 0 ? Math.round((variableMonthly / denom) * 1000) / 10 : 0;
 
-  return { fixedMonthly, variableMonthly, fixedPct, variablePct, items };
+  return { fixedMonthly, variableMonthly, fixedPct, variablePct, items: [...active, ...stopped], dismissedItems: dismissed };
 }

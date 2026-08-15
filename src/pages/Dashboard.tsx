@@ -32,7 +32,7 @@ import {
   getTopMerchants,
   getCashflowSankey,
 } from '../lib/analytics';
-import { getRecurringItems } from '../lib/recurring';
+import { getRecurringItems, applyRecurringOverrides } from '../lib/recurring';
 import { formatCurrency, getPeriodDates } from '../lib/utils';
 import { getTotalPropertyEquity } from '../lib/property';
 import MiniSparkline from '../components/MiniSparkline';
@@ -146,7 +146,8 @@ export default function Dashboard() {
   const accountData = getAccountBreakdown(accounts, transactions);
   const top5 = getTopExpenses(periodTxs);
   const periodSummary = getPeriodSummaryWithDelta(transactions, start, end);
-  const recurring = getRecurringItems(transactions).filter(r => r.active);
+  const recurringOverrides = storage.getRecurringOverrides();
+  const recurring = applyRecurringOverrides(getRecurringItems(transactions), recurringOverrides).active;
   const categoryTrends = getCategoryTrend(transactions);
   const labelSpending = getLabelSpending(periodTxs);
   const budgets = storage.getBudgets();

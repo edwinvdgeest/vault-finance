@@ -1,4 +1,4 @@
-import type { Transaction, Account, Rule, Asset, Budget, Property, Scenario } from '../types';
+import type { Transaction, Account, Rule, Asset, Budget, Property, Scenario, RecurringOverride } from '../types';
 import { parseSepaFields } from './parsers/abn';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
@@ -130,6 +130,7 @@ let _budgets: Budget[] = [];
 let _properties: Property[] = [];
 let _scenarios: Scenario[] = [];
 let _settings: Record<string, unknown> = {};
+let _recurringOverrides: RecurringOverride[] = [];
 let _loadedFor: string | null = null;
 
 export async function initStorage(): Promise<void> {
@@ -142,6 +143,7 @@ export async function initStorage(): Promise<void> {
   _properties = await apiGet('/properties', []);
   _scenarios = await apiGet('/scenarios', []);
   _settings = await apiGet('/settings', {});
+  _recurringOverrides = await apiGet('/recurring-overrides', []);
   _loadedFor = _currentWorkspace;
   // Clean up raw SEPA names from ABN imports
   const cleaned = cleanRawSepaNames(_transactions);
@@ -175,6 +177,7 @@ export async function setWorkspace(ws: string): Promise<void> {
   _properties = [];
   _scenarios = [];
   _settings = {};
+  _recurringOverrides = [];
   _loadedFor = null;
   try { localStorage.setItem(ACTIVE_WS_KEY, ws); } catch { /* ignore */ }
   await initStorage();
@@ -305,6 +308,13 @@ export const storage = {
     _scenarios = _scenarios.filter(s => s.id !== id);
     apiPost('/scenarios', _scenarios).catch(() => {});
     safeLocalSet(wsKey('scenarios'), _scenarios);
+  },
+
+  getRecurringOverrides: () => _recurringOverrides,
+  setRecurringOverrides: (overrides: RecurringOverride[]) => {
+    _recurringOverrides = overrides;
+    apiPost('/recurring-overrides', overrides).catch(() => {});
+    safeLocalSet(wsKey('recurring-overrides'), overrides);
   },
 
   getSettings: () => _settings,

@@ -71,6 +71,21 @@ export interface Budget {
   monthlyLimit: number;
 }
 
+/**
+ * Handmatige correctie op de automatische vaste-lasten-detectie (zie
+ * src/lib/recurring.ts), per genormaliseerde merchant-key. De detectie is
+ * statistisch en kan nooit alles perfect raden (toevallige herhaalaankopen,
+ * of data die achterloopt op de werkelijkheid) — dit geeft de gebruiker het
+ * laatste woord.
+ */
+export interface RecurringOverride {
+  key: string;
+  /** Dit is geen vaste last — overal verbergen (top-merchants blijft ongemoeid). */
+  dismissed?: boolean;
+  /** Forceer "gestopt", ongeacht wat de detectie zelf berekent. */
+  markedStopped?: boolean;
+}
+
 export type ScenarioEventKind = 'oneOff' | 'recurring';
 
 export interface ScenarioEvent {

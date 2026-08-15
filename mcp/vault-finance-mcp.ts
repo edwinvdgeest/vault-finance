@@ -22,7 +22,8 @@ import { forecastCashflow } from '../src/lib/cashflow';
 import { getRobustMonthlyNetSavings } from '../src/lib/analytics';
 import { getTotalPropertyEquity, getMonthlyPayment } from '../src/lib/property';
 import { normalizeMerchant } from '../src/lib/merchant';
-import { getRecurringItems, intervalLabel, type RecurringItem } from '../src/lib/recurring';
+import { getRecurringItems, applyRecurringOverrides, intervalLabel, type RecurringItem } from '../src/lib/recurring';
+import type { RecurringOverride } from '../src/types';
 import type {
   Asset as LibAsset, Account as LibAccount, Property as LibProperty, Scenario, ScenarioEvent,
 } from '../src/types';
@@ -498,7 +499,10 @@ server.tool(
     workspace: workspaceParam,
   },
   async ({ min_occurrences, include_inactive, workspace }) => {
-    const txs = await api<Transaction[]>('/transactions', workspace);
+    const [txs, overrides] = await Promise.all([
+      api<Transaction[]>('/transactions', workspace),
+      api<RecurringOverride[]>('/recurring-overrides', workspace),
+    ]);
     const minOcc = min_occurrences ?? 3;
 
     // "Actief" wordt beoordeeld t.o.v. de laatste transactie in de dataset,
@@ -507,9 +511,10 @@ server.tool(
       .filter(t => t.amount < 0 && !t.isInternal)
       .reduce((max, t) => (t.date > max ? t.date : max), '');
 
-    const items = getRecurringItems(txs, { minOccurrences: minOcc });
-    const active = items.filter(r => r.active).sort((a, b) => b.monthly - a.monthly);
-    const inactive = items.filter(r => !r.active).sort((a, b) => b.monthly - a.monthly);
+    const rawItems = getRecurringItems(txs, { minOccurrences: minOcc });
+    const resolved = applyRecurringOverrides(rawItems, overrides);
+    const active = resolved.active.sort((a, b) => b.monthly - a.monthly);
+    const inactive = resolved.stopped.sort((a, b) => b.monthly - a.monthly);
     const totalMonthly = active.reduce((s, r) => s + r.monthly, 0);
 
     const fmtLine = (r: RecurringItem) => {

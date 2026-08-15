@@ -138,6 +138,64 @@
     border: 1px solid rgba(139, 92, 246, 0.3);
   }
 
+  .nav-group-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    background: none;
+    border: none;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .nav-group-menu {
+    position: absolute;
+    top: calc(100% + 0.4rem);
+    left: 0;
+    min-width: 190px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    background: rgba(15, 15, 30, 0.97);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.75rem;
+    padding: 0.4rem;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+    z-index: 60;
+    animation: fadeIn 0.15s ease;
+  }
+
+  .nav-group-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.5rem 0.7rem;
+    border-radius: 0.5rem;
+    color: rgba(148, 163, 184, 1);
+    text-decoration: none;
+    font-size: 0.85rem;
+    font-weight: 500;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .nav-group-menu-item svg {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+  }
+
+  .nav-group-menu-item:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: white;
+  }
+
+  .nav-group-menu-item.active {
+    background: rgba(139, 92, 246, 0.18);
+    color: white;
+  }
+
   /* Bottom nav - mobile only */
   .bottom-nav {
     display: none;
@@ -282,6 +340,97 @@
   @keyframes fadeIn {
     from { opacity: 0; }
     to { opacity: 1; }
+  }
+
+  /* Mobile "Meer" sheet */
+  .mobile-more-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 150;
+    animation: fadeIn 0.15s ease;
+  }
+
+  .mobile-more-sheet {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 151;
+    max-height: 70vh;
+    overflow-y: auto;
+    background: rgba(15, 15, 30, 0.98);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-bottom: none;
+    border-top-left-radius: 1.25rem;
+    border-top-right-radius: 1.25rem;
+    padding: 0.75rem 1rem calc(1.25rem + env(safe-area-inset-bottom, 0px));
+    animation: slideUp 0.2s ease;
+  }
+
+  .mobile-more-handle {
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.2);
+    margin: 0 auto 0.75rem;
+  }
+
+  .mobile-more-group {
+    margin-bottom: 0.75rem;
+  }
+
+  .mobile-more-group:last-child {
+    margin-bottom: 0;
+  }
+
+  .mobile-more-group-title {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0 0.5rem;
+    margin-bottom: 0.35rem;
+  }
+
+  .mobile-more-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.65rem 0.5rem;
+    border-radius: 0.5rem;
+    text-decoration: none;
+    color: rgba(226, 232, 240, 0.9);
+    font-size: 0.9rem;
+    font-weight: 500;
+  }
+
+  .mobile-more-item svg {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    color: #94a3b8;
+  }
+
+  .mobile-more-item:active {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .mobile-more-item.active {
+    background: rgba(139, 92, 246, 0.15);
+    color: white;
+  }
+
+  .mobile-more-item.active svg {
+    color: #c4b5fd;
+  }
+
+  @keyframes slideUp {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
   }
 }
 
